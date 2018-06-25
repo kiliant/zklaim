@@ -1,8 +1,8 @@
 zklaim
 ======
 
-.. image:: https://travis-ci.com/kiliant/zklaim.svg?token=s4ESSVhWi2q4PNSopjzk&branch=master
-    :target: https://travis-ci.com/kiliant/zklaim
+.. image:: https://travis-ci.org/kiliant/zklaim.svg?branch=master
+    :target: https://travis-ci.org/kiliant/zklaim
 
 Instructions
 ~~~~~~~~~~~~
