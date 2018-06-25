@@ -1,0 +1,11 @@
+sudo: required
+dist: trusty
+language: c
+
+services:
+  - docker
+
+script:
+ - docker build -t zklaimtest .
+ - docker run zklaimtest
+

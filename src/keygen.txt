@@ -1,0 +1,13 @@
+generated ecc key using the following commands:
+- openssl ecparam -list_curves
+- openssl ecparam -name secp256k1 -genkey -noout -out ca_ecc_key.pem
+
+generating public key:
+- openssl ec -in ca_ecc_key.pem -pubout -out ca_ecc_key_pub.pem
+
+signing:
+- openssl dgst -sha256 -sign ca_ecc_key.pem src/main > signature
+
+verifying:
+- openssl dgst -sha256 -verify ca_ecc_key_pub.pem -signature signature src/main
+

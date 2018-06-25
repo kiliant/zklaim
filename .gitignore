@@ -1,0 +1,17 @@
+*.aux
+*.bcf
+*.lof
+*.lot
+*.log
+*.out
+*.toc
+thesis/build
+thesis/*.run.xml
+thesis/*.pdf
+build/
+
+ca_ecc_key.pem
+ca_ecc_key_pub.pem
+
+.gdb_history
+

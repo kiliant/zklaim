@@ -1,0 +1,5 @@
+- as STATIC
+/usr/bin/cc -O2 -o main ../src/main.c src/libzklaim.a -lgcrypt lib/libsnark/libsnark/libsnark.a lib/libsnark/depends/libff/libff/libff.a /usr/lib/libgmp.so -lgmp -lgmpxx -lcrypto -lprocps lib/libsnark/depends/libzm.a -lstdc++ -lm
+
+- as SHARED
+gcc ../src/main.c -Lsrc -lzklaim -o main -lgcrypt lib/libsnark/libsnark/libsnark.a lib/libsnark/depends/libff/libff/libff.a /usr/lib/libgmp.so -lgmp -lgmpxx -lcrypto -lprocps lib/libsnark/depends/libzm.a -lstdc++ -lm
