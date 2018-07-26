@@ -74,7 +74,7 @@ struct zklaim_payload {
     uint64_t salt;
     unsigned char hash[32];
     uint8_t priv;
-    unsigned char pre[384]; // this is by definition set to 0 if public
+    unsigned char pre[48]; // this is by definition set to 0 if public
 };
 
 struct zklaim_header {
