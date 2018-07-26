@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 extern "C" {
-#include "zklaim.h"
+#include <zklaim/zklaim.h>
 }
 
 TEST(zklaim, can_create_ctx) {

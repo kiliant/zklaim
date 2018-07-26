@@ -22,9 +22,9 @@
 
 #include <stdlib.h>
 #include <stdint.h>
-#include "zklaim.h"
-#include "zklaim_ecc.h"
-#include "zklaim_hash.h"
+#include <zklaim/zklaim.h>
+#include <zklaim/zklaim_ecc.h>
+#include <zklaim/zklaim_hash.h>
 #include <openssl/sha.h>
 #include <stdio.h>
 #include <fcntl.h>

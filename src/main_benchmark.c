@@ -19,9 +19,9 @@
  * Test File for zklaim c implementation
  */
 
-#include "zklaim.h"
-#include "zklaim_ecc.h"
-#include "zklaim_hash.h"
+#include <zklaim/zklaim.h>
+#include <zklaim/zklaim_ecc.h>
+#include <zklaim/zklaim_hash.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>

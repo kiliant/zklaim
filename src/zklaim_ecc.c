@@ -17,7 +17,7 @@
 #ifndef ZKLAIM_ECC_C
 #define ZKLAIM_ECC_C
 
-#include "zklaim_ecc.h"
+#include <zklaim/zklaim_ecc.h>
 
 void print_sexp(gcry_sexp_t sexp) {
     unsigned char* buf;

@@ -18,8 +18,8 @@
 #ifndef ZKLAIM_HASH_C
 #define ZKLAIM_HASH_C
 
-#include "zklaim_hash.h"
-#include "zklaim.h"
+#include <zklaim/zklaim_hash.h>
+#include <zklaim/zklaim.h>
 
 void zklaim_print_hex(unsigned char *buf, size_t len) {
     for (size_t i = 0; i<len; i++) {

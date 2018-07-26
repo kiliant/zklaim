@@ -1,6 +1,6 @@
 #include <gtest/gtest.h>
 extern "C" {
-#include "zklaim_ecc.h"
+#include <zklaim/zklaim_ecc.h>
 }
 
 #define CHECK_GCRY_ERR(err) do {if(err != GPG_ERR_NO_ERROR) { fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err)); ASSERT_TRUE(0);}} while (0)

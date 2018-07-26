@@ -35,7 +35,7 @@ using namespace std;
 //bit_vector memtobv(unsigned char, size_t);
 
 extern "C" {
-#include "zklaim.h"
+#include <zklaim/zklaim.h>
 }
 
 

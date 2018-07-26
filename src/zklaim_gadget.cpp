@@ -24,7 +24,7 @@ typedef std::vector<bool> bit_vector;
 bit_vector memtobv(unsigned char*, size_t);
 
 extern "C" {
-#include "zklaim.h"
+#include <zklaim/zklaim.h>
 }
 
 const size_t sha256_digest_len = 256;

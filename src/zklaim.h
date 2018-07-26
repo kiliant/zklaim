@@ -27,7 +27,7 @@
 #ifndef ZKLAIM_H
 #define ZKLAIM_H
 
-#include "zklaim_ecc.h"
+#include <zklaim/zklaim_ecc.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <openssl/ec.h>

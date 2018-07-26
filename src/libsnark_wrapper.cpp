@@ -35,7 +35,7 @@
 #include "snark.cpp"
 
 extern "C" {
-#include "zklaim.h"
+#include <zklaim/zklaim.h>
 }
 
 // this is probably not needed, as cmake takes care of correct compilation
