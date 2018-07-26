@@ -112,7 +112,7 @@ int worker() {
      */
     printf("[ISSUER] adding payloads to context\n");
     zklaim_add_pl(ctx, pl);
-    zklaim_add_pl(ctx, pl);
+    /* zklaim_add_pl(ctx, pl); */
     //zklaim_add_pl(ctx, pl2);
     zklaim_hash_ctx(ctx);
 
@@ -192,8 +192,8 @@ int worker() {
 
     // set custom prover reference values here:
     ctx_prover->pl_ctx_head->pl.data0_ref = 20;
-    ctx_prover->pl_ctx_head->next->pl.data0_ref = 30;
-    ctx_prover->pl_ctx_head->next->pl.data0_op = zklaim_less_or_eq;
+    /* ctx_prover->pl_ctx_head->next->pl.data0_ref = 30; */
+    /* ctx_prover->pl_ctx_head->next->pl.data0_op = zklaim_less_or_eq; */
     //ctx_prover->pl_ctx_head->pl.data0_op = zklaim_less;
     ctx_prover->pl_ctx_head->pl.data4_ref = 0;
     ctx_prover->pl_ctx_head->pl.data4_op = zklaim_noop;

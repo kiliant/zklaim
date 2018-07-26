@@ -42,7 +42,7 @@ void zklaim_ctx_free(zklaim_ctx *ctx) {
     // free all payloads
     zklaim_wrap_payload_ctx *back[ctx->num_of_payloads];
     zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
-    for (int i=0; i<ctx->num_of_payloads; i++) {
+    for (size_t i=0; i<ctx->num_of_payloads; i++) {
         back[i] = cur;
         cur = cur->next;
     }
@@ -196,7 +196,8 @@ void zklaim_print(zklaim_ctx *ctx){
 // set attribute at given position within pl
 void zklaim_set_attr(zklaim_payload *pl, uint64_t attr, uint8_t pos) {
     if (pos>5) {
-        printf("zklaim only supports 5 attribute slots per payload\n");
+        fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "zklaim only supports 5 attribute slots per payload");
+
         return;
     }
     memcpy((pl->pre + pos*8), &attr, 8);
@@ -215,7 +216,6 @@ void zklaim_clear_pres(zklaim_ctx *ctx) {
 
 void plain_ctx(zklaim_ctx *ctx, unsigned char **buf, size_t *total_length) {
     size_t tl;
-    unsigned char *sig_ser;
     // lay out structure in buffer
     tl = ctx->num_of_payloads * sizeof(((zklaim_payload*)0)->hash);
     tl += ctx->vk_size;
@@ -241,12 +241,12 @@ int zklaim_ctx_verify(zklaim_ctx *ctx) {
     unsigned char *buf;
 
     if (zklaim_buf2sig(ctx->signature, sizeof(ctx->signature), &sig)) {
-        printf("could not load sig\n");
+        fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "could not load sig");
         return ZKLAIM_ERROR;
     }
 
     if (zklaim_buf2pub(ctx->pub_key, sizeof(ctx->pub_key), &pub)) {
-        printf("could not load pub\n");
+        fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "could not load pub");
         return ZKLAIM_ERROR;
     }
 
@@ -334,8 +334,8 @@ int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len) {
     // first, verify hash of header to ensure integrity
     SHA256(buf, sizeof(zklaim_header)-sizeof(((zklaim_header*)0)->hash), header_integrity);
     if (!memcmp(header_integrity, buf+16, 32)) {
-        printf("zklaim_header integrity check failed\n");
-        return 1;
+        fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "zklaim_header integrity check failed");
+        return ZKLAIM_ERROR;
     }
 
     zklaim_header *header = (zklaim_header*) buf_iterator;
@@ -356,8 +356,9 @@ int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len) {
     total_length += ctx->proof_size;
 
     if (len != total_length) {
-        printf("buffer containing zklaim_ctx has invalid length (len: %zu vs total: %zu)\n", len, total_length);
-        return 1;
+        fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "buffer containing zklaim_ctx has invalid total_length");
+        //printf("buffer containing zklaim_ctx has invalid length (len: %zu vs total: %zu)\n", len, total_length);
+        return ZKLAIM_ERROR;
     }
 
     // now point on first payload
@@ -389,7 +390,7 @@ int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len) {
     }
 
     //return zklaim_ctx_verify(ctx);
-    return 0;
+    return ZKLAIM_OK;
 }
 
 size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf) {
@@ -404,7 +405,7 @@ size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf) {
     // 2 - allocate buf of appropriate size
     *buf = (unsigned char*) calloc(1, total_length);
     if (*buf == NULL) {
-        printf("Could not allocate\n");
+        fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "could not allocate");
         return 0;
     }
 
