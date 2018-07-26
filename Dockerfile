@@ -8,4 +8,4 @@ WORKDIR /root
 
 ADD . /root/
 
-CMD cd /root && touch build && rm -r build && mkdir -p build && cd build && cmake .. && make -j4 bttest
+CMD cd /root && touch build && rm -r build && mkdir -p build && cd build && cmake .. && make install && make bttest

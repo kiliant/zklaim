@@ -90,4 +90,4 @@ endif()
 include_directories(.)
 
 add_subdirectory(lib)
-add_subdirectory(src)
+add_subdirectory(zklaim)

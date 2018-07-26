@@ -4,6 +4,7 @@ include_directories(
     tests/hashes
 )
 
+include_directories(${CMAKE_SOURCE_DIR}/zklaim)
 
 #set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fPIC")
 add_library(
