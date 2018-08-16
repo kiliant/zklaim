@@ -116,8 +116,8 @@ void zklaim_hash_pl(zklaim_payload *pl) {
     read(rand, &pl->salt, sizeof(pl->salt));
     close(rand);
     // copy over salt to pre
-    memcpy((pl->pre + 5*8), &pl->salt, 8);
-    SHA256((unsigned char*) pl->pre, 48, pl->hash);
+    memcpy((pl->pre + 5*sizeof(uint64_t)), &pl->salt, sizeof(uint64_t));
+    SHA256((unsigned char*) pl->pre, sizeof(pl->pre), pl->hash);
 }
 
 void zklaim_hash_ctx(zklaim_ctx *ctx) {
@@ -129,7 +129,7 @@ void zklaim_hash_ctx(zklaim_ctx *ctx) {
     }
 }
 
-char* zklaim_parse_op (enum zklaim_op e) {
+const char* zklaim_parse_op (enum zklaim_op e) {
     // TODO: see compilation warning
     switch (e) {
         case zklaim_noop:
@@ -170,18 +170,18 @@ void zklaim_print(zklaim_ctx *ctx){
         printf("======================================================================\n");
         printf("Format: [actual] op reference\n");
         if (cur->pl.priv != 1) {
-            printf("data%i: [%lu] %s %lu\n", 0, data0, zklaim_parse_op(cur->pl.data0_op), cur->pl.data0_ref);
-            printf("data%i: [%lu] %s %lu\n", 1, data1, zklaim_parse_op(cur->pl.data1_op), cur->pl.data1_ref);
-            printf("data%i: [%lu] %s %lu\n", 2, data2, zklaim_parse_op(cur->pl.data2_op), cur->pl.data2_ref);
-            printf("data%i: [%lu] %s %lu\n", 3, data3, zklaim_parse_op(cur->pl.data3_op), cur->pl.data3_ref);
-            printf("data%i: [%lu] %s %lu\n", 4, data4, zklaim_parse_op(cur->pl.data4_op), cur->pl.data4_ref);
-            printf("payload salt: %lu\n", salt);
+            printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", 0, data0, zklaim_parse_op(cur->pl.data0_op), cur->pl.data0_ref);
+            printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", 1, data1, zklaim_parse_op(cur->pl.data1_op), cur->pl.data1_ref);
+            printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", 2, data2, zklaim_parse_op(cur->pl.data2_op), cur->pl.data2_ref);
+            printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", 3, data3, zklaim_parse_op(cur->pl.data3_op), cur->pl.data3_ref);
+            printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", 4, data4, zklaim_parse_op(cur->pl.data4_op), cur->pl.data4_ref);
+            printf("payload salt: %"PRIu64"\n", salt);
         } else {
-            printf("data%i: [hidden] %s %lu\n", 0, zklaim_parse_op(cur->pl.data0_op), cur->pl.data0_ref);
-            printf("data%i: [hidden] %s %lu\n", 1, zklaim_parse_op(cur->pl.data1_op), cur->pl.data1_ref);
-            printf("data%i: [hidden] %s %lu\n", 2, zklaim_parse_op(cur->pl.data2_op), cur->pl.data2_ref);
-            printf("data%i: [hidden] %s %lu\n", 3, zklaim_parse_op(cur->pl.data3_op), cur->pl.data3_ref);
-            printf("data%i: [hidden] %s %lu\n", 4, zklaim_parse_op(cur->pl.data4_op), cur->pl.data4_ref);
+            printf("data%i: [hidden] %s %"PRIu64"\n", 0, zklaim_parse_op(cur->pl.data0_op), cur->pl.data0_ref);
+            printf("data%i: [hidden] %s %"PRIu64"\n", 1, zklaim_parse_op(cur->pl.data1_op), cur->pl.data1_ref);
+            printf("data%i: [hidden] %s %"PRIu64"\n", 2, zklaim_parse_op(cur->pl.data2_op), cur->pl.data2_ref);
+            printf("data%i: [hidden] %s %"PRIu64"\n", 3, zklaim_parse_op(cur->pl.data3_op), cur->pl.data3_ref);
+            printf("data%i: [hidden] %s %"PRIu64"\n", 4, zklaim_parse_op(cur->pl.data4_op), cur->pl.data4_ref);
             printf("payload salt: [hidden]\n");
         }
         printf("Hash: ");
