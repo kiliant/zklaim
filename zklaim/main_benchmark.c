@@ -62,29 +62,29 @@ int worker(int k) {
      */
     zklaim_payload pl, pl2;
     memset(&pl, 0, sizeof(zklaim_payload));
-    pl.data0_ref = 18;
-    pl.data0_op = (enum zklaim_op) (zklaim_greater | zklaim_eq);
-    pl.data1_ref = 1;
-    pl.data1_op = zklaim_eq;
-    pl.data2_ref = 2;
-    pl.data2_op = zklaim_eq;
-    pl.data3_ref = 3;
-    pl.data3_op = zklaim_eq;
-    pl.data4_ref = 600;
-    pl.data4_op = zklaim_less;
+    pl.data_ref[0] = 18;
+    pl.data_op[0] = (enum zklaim_op) (zklaim_greater | zklaim_eq);
+    pl.data_ref[1] = 1;
+    pl.data_op[1] = zklaim_eq;
+    pl.data_ref[2] = 2;
+    pl.data_op[2] = zklaim_eq;
+    pl.data_ref[3] = 3;
+    pl.data_op[3] = zklaim_eq;
+    pl.data_ref[4] = 600;
+    pl.data_op[4] = zklaim_less;
     pl.priv = 0;
 
     memset(&pl2, 0, sizeof(zklaim_payload));
-    pl2.data0_ref = 0;
-    pl2.data0_op = zklaim_noop;
-    pl2.data1_ref = 0;
-    pl2.data1_op = zklaim_noop;
-    pl2.data2_ref = 0;
-    pl2.data2_op = zklaim_noop;
-    pl2.data3_ref = 0;
-    pl2.data3_op = zklaim_noop;
-    pl2.data4_ref = 9223372036854775807;
-    pl2.data4_op = zklaim_less_or_eq;
+    pl2.data_ref[0] = 0;
+    pl2.data_op[0] = zklaim_noop;
+    pl2.data_ref[1] = 0;
+    pl2.data_op[1] = zklaim_noop;
+    pl2.data_ref[2] = 0;
+    pl2.data_op[2] = zklaim_noop;
+    pl2.data_ref[3] = 0;
+    pl2.data_op[3] = zklaim_noop;
+    pl2.data_ref[4] = 9223372036854775807;
+    pl2.data_op[4] = zklaim_less_or_eq;
     pl2.priv = 0;
 
     // fill in the values
@@ -119,19 +119,19 @@ int worker(int k) {
     zklaim_ctx_sign(ctx, priv);
 
     // set custom prover reference values here:
-    ctx->pl_ctx_head->pl.data0_ref = 20;
-    //ctx_prover->pl_ctx_head->pl.data0_op = zklaim_less;
-    ctx->pl_ctx_head->pl.data4_ref = 0;
-    ctx->pl_ctx_head->pl.data4_op = zklaim_noop;
+    ctx->pl_ctx_head->pl.data_ref[0] = 20;
+    //ctx_prover->pl_ctx_head->pl.data_op[0] = zklaim_less;
+    ctx->pl_ctx_head->pl.data_ref[4] = 0;
+    ctx->pl_ctx_head->pl.data_op[4] = zklaim_noop;
 
-    ctx->pl_ctx_head->pl.data1_ref = 0;
-    ctx->pl_ctx_head->pl.data1_op = zklaim_noop;
+    ctx->pl_ctx_head->pl.data_ref[1] = 0;
+    ctx->pl_ctx_head->pl.data_op[1] = zklaim_noop;
 
-    ctx->pl_ctx_head->pl.data2_ref = 0;
-    ctx->pl_ctx_head->pl.data2_op = zklaim_noop;
+    ctx->pl_ctx_head->pl.data_ref[2] = 0;
+    ctx->pl_ctx_head->pl.data_op[2] = zklaim_noop;
 
-    ctx->pl_ctx_head->pl.data3_ref = 0;
-    ctx->pl_ctx_head->pl.data3_op = zklaim_noop;
+    ctx->pl_ctx_head->pl.data_ref[3] = 0;
+    ctx->pl_ctx_head->pl.data_op[3] = zklaim_noop;
 
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t);
     zklaim_proof_generate(ctx);
