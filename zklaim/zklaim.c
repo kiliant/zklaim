@@ -156,33 +156,28 @@ void zklaim_print(zklaim_ctx *ctx){
     // primarily print payloads!
     zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
     size_t counter = 0;
-    uint64_t data0, data1, data2, data3, data4, salt;
+    uint64_t data[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
+    uint64_t salt;
+    int i;
     while (cur != NULL) {
         // recover data
-        memcpy(&data0, cur->pl.pre, 8);
-        memcpy(&data1, cur->pl.pre+8, 8);
-        memcpy(&data2, cur->pl.pre+16, 8);
-        memcpy(&data3, cur->pl.pre+24, 8);
-        memcpy(&data4, cur->pl.pre+32, 8);
+        memcpy(&data[0], cur->pl.pre, 8);
+        memcpy(&data[1], cur->pl.pre+8, 8);
+        memcpy(&data[2], cur->pl.pre+16, 8);
+        memcpy(&data[3], cur->pl.pre+24, 8);
+        memcpy(&data[4], cur->pl.pre+32, 8);
         memcpy(&salt, cur->pl.pre+40, 8);
         printf("======================================================================\n");
         printf("=======          viewing information about payload #%zu          =======\n", counter);
         printf("======================================================================\n");
         printf("Format: [actual] op reference\n");
-        int i;
         if (cur->pl.priv != 1) {
-            printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", 0, data0, zklaim_parse_op(cur->pl.data_op[0]), cur->pl.data_ref[0]);
-            printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", 1, data1, zklaim_parse_op(cur->pl.data_op[1]), cur->pl.data_ref[1]);
-            printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", 2, data2, zklaim_parse_op(cur->pl.data_op[2]), cur->pl.data_ref[2]);
-            printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", 3, data3, zklaim_parse_op(cur->pl.data_op[3]), cur->pl.data_ref[3]);
-            printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", 4, data4, zklaim_parse_op(cur->pl.data_op[4]), cur->pl.data_ref[4]);
+            for (int i = 0; i < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; i++)
+                printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", i, data[i], zklaim_parse_op(cur->pl.data_op[i]), cur->pl.data_ref[i]);
             printf("payload salt: %lu\n", salt);
         } else {
-            printf("data%i: [hidden] %s %"PRIu64"\n", 0, zklaim_parse_op(cur->pl.data_op[0]), cur->pl.data_ref[0]);
-            printf("data%i: [hidden] %s %"PRIu64"\n", 1, zklaim_parse_op(cur->pl.data_op[1]), cur->pl.data_ref[1]);
-            printf("data%i: [hidden] %s %"PRIu64"\n", 2, zklaim_parse_op(cur->pl.data_op[2]), cur->pl.data_ref[2]);
-            printf("data%i: [hidden] %s %"PRIu64"\n", 3, zklaim_parse_op(cur->pl.data_op[3]), cur->pl.data_ref[3]);
-            printf("data%i: [hidden] %s %"PRIu64"\n", 4, zklaim_parse_op(cur->pl.data_op[4]), cur->pl.data_ref[4]);
+            for (int i = 0; i < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; i++)
+                printf("data%i: [hidden] %s %"PRIu64"\n", i, zklaim_parse_op(cur->pl.data_op[i]), cur->pl.data_ref[i]);
             printf("payload salt: [hidden]\n");
         }
         printf("Hash: ");
