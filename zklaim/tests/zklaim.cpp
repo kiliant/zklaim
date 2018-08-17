@@ -11,16 +11,16 @@ TEST(zklaim, can_create_ctx) {
 TEST(zklaim, can_create_and_add_pl) {
     zklaim_payload pl;
     memset(&pl, 0, sizeof(zklaim_payload));
-    pl.data0_ref = 18;
-    pl.data0_op = (enum zklaim_op) (zklaim_greater | zklaim_eq);
-    pl.data1_ref = 0;
-    pl.data1_op = zklaim_eq;
-    pl.data2_ref = 0;
-    pl.data2_op = zklaim_eq;
-    pl.data3_ref = 0;
-    pl.data3_op = zklaim_eq;
-    pl.data4_ref = 600;
-    pl.data4_op = zklaim_less;
+    pl.data_ref[0] = 18;
+    pl.data_op[0] = (enum zklaim_op) (zklaim_greater | zklaim_eq);
+    pl.data_ref[1] = 0;
+    pl.data_op[1] = zklaim_eq;
+    pl.data_ref[2] = 0;
+    pl.data_op[2] = zklaim_eq;
+    pl.data_ref[3] = 0;
+    pl.data_op[3] = zklaim_eq;
+    pl.data_ref[4] = 600;
+    pl.data_op[4] = zklaim_less;
     pl.priv = 0;
 
     zklaim_ctx *ctx = zklaim_context_new();
@@ -32,16 +32,16 @@ TEST(zklaim, can_create_and_add_pl) {
 TEST(zklaim, can_do_ts) {
     zklaim_payload pl;
     memset(&pl, 0, sizeof(zklaim_payload));
-    pl.data0_ref = 18;
-    pl.data0_op = (enum zklaim_op) (zklaim_greater | zklaim_eq);
-    pl.data1_ref = 0;
-    pl.data1_op = zklaim_eq;
-    pl.data2_ref = 0;
-    pl.data2_op = zklaim_eq;
-    pl.data3_ref = 0;
-    pl.data3_op = zklaim_eq;
-    pl.data4_ref = 600;
-    pl.data4_op = zklaim_less;
+    pl.data_ref[0] = 18;
+    pl.data_op[0] = (enum zklaim_op) (zklaim_greater | zklaim_eq);
+    pl.data_ref[1] = 0;
+    pl.data_op[1] = zklaim_eq;
+    pl.data_ref[2] = 0;
+    pl.data_op[2] = zklaim_eq;
+    pl.data_ref[3] = 0;
+    pl.data_op[3] = zklaim_eq;
+    pl.data_ref[4] = 600;
+    pl.data_op[4] = zklaim_less;
     pl.priv = 0;
 
     zklaim_ctx *ctx = zklaim_context_new();
@@ -61,16 +61,16 @@ TEST(zklaim, can_sign) {
     zklaim_gen_pk(&priv);
 
     memset(&pl, 0, sizeof(zklaim_payload));
-    pl.data0_ref = 18;
-    pl.data0_op = (enum zklaim_op) (zklaim_greater | zklaim_eq);
-    pl.data1_ref = 0;
-    pl.data1_op = zklaim_eq;
-    pl.data2_ref = 0;
-    pl.data2_op = zklaim_eq;
-    pl.data3_ref = 0;
-    pl.data3_op = zklaim_eq;
-    pl.data4_ref = 600;
-    pl.data4_op = zklaim_less;
+    pl.data_ref[0] = 18;
+    pl.data_op[0] = (enum zklaim_op) (zklaim_greater | zklaim_eq);
+    pl.data_ref[1] = 0;
+    pl.data_op[1] = zklaim_eq;
+    pl.data_ref[2] = 0;
+    pl.data_op[2] = zklaim_eq;
+    pl.data_ref[3] = 0;
+    pl.data_op[3] = zklaim_eq;
+    pl.data_ref[4] = 600;
+    pl.data_op[4] = zklaim_less;
     pl.priv = 0;
 
     zklaim_ctx *ctx = zklaim_context_new();
@@ -102,29 +102,29 @@ TEST(zklaim, can_detect_invalid_signature) {
 
     zklaim_payload pl, pl2;
     memset(&pl, 0, sizeof(zklaim_payload));
-    pl.data0_ref = 18;
-    pl.data0_op = (enum zklaim_op) (zklaim_greater | zklaim_eq);
-    pl.data1_ref = 0;
-    pl.data1_op = zklaim_eq;
-    pl.data2_ref = 0;
-    pl.data2_op = zklaim_eq;
-    pl.data3_ref = 0;
-    pl.data3_op = zklaim_eq;
-    pl.data4_ref = 600;
-    pl.data4_op = zklaim_less;
+    pl.data_ref[0] = 18;
+    pl.data_op[0] = (enum zklaim_op) (zklaim_greater | zklaim_eq);
+    pl.data_ref[1] = 0;
+    pl.data_op[1] = zklaim_eq;
+    pl.data_ref[2] = 0;
+    pl.data_op[2] = zklaim_eq;
+    pl.data_ref[3] = 0;
+    pl.data_op[3] = zklaim_eq;
+    pl.data_ref[4] = 600;
+    pl.data_op[4] = zklaim_less;
     pl.priv = 0;
 
     memset(&pl2, 0, sizeof(zklaim_payload));
-    pl2.data0_ref = 0;
-    pl2.data0_op = zklaim_noop;
-    pl2.data1_ref = 0;
-    pl2.data1_op = zklaim_noop;
-    pl2.data2_ref = 0;
-    pl2.data2_op = zklaim_noop;
-    pl2.data3_ref = 0;
-    pl2.data3_op = zklaim_noop;
-    pl2.data4_ref = 9223372036854775807;
-    pl2.data4_op = zklaim_less_or_eq;
+    pl2.data_ref[0] = 0;
+    pl2.data_op[0] = zklaim_noop;
+    pl2.data_ref[1] = 0;
+    pl2.data_op[1] = zklaim_noop;
+    pl2.data_ref[2] = 0;
+    pl2.data_op[2] = zklaim_noop;
+    pl2.data_ref[3] = 0;
+    pl2.data_op[3] = zklaim_noop;
+    pl2.data_ref[4] = 9223372036854775807;
+    pl2.data_op[4] = zklaim_less_or_eq;
     pl2.priv = 0;
 
     zklaim_set_attr(&pl, 18, 0);
@@ -159,7 +159,7 @@ TEST(zklaim, can_detect_invalid_signature) {
     ctx_prover->pk_size = ctx->pk_size;
     memcpy(ctx_prover->pk, ctx->pk, ctx_prover->pk_size);
 
-    ctx_prover->pl_ctx_head->pl.data0_ref = 19;
+    ctx_prover->pl_ctx_head->pl.data_ref[0] = 19;
     zklaim_hash_ctx(ctx_prover);
 
     zklaim_clear_pres(ctx_prover);
@@ -191,16 +191,16 @@ TEST(zklaim, can_verify) {
     zklaim_pub2buf(pub, &pubbuf, &publen);
 
     memset(&pl, 0, sizeof(zklaim_payload));
-    pl.data0_ref = 18;
-    pl.data0_op = (enum zklaim_op) (zklaim_greater | zklaim_eq);
-    pl.data1_ref = 0;
-    pl.data1_op = zklaim_eq;
-    pl.data2_ref = 0;
-    pl.data2_op = zklaim_eq;
-    pl.data3_ref = 0;
-    pl.data3_op = zklaim_eq;
-    pl.data4_ref = 600;
-    pl.data4_op = zklaim_less;
+    pl.data_ref[0] = 18;
+    pl.data_op[0] = (enum zklaim_op) (zklaim_greater | zklaim_eq);
+    pl.data_ref[1] = 0;
+    pl.data_op[1] = zklaim_eq;
+    pl.data_ref[2] = 0;
+    pl.data_op[2] = zklaim_eq;
+    pl.data_ref[3] = 0;
+    pl.data_op[3] = zklaim_eq;
+    pl.data_ref[4] = 600;
+    pl.data_op[4] = zklaim_less;
     pl.priv = 0;
 
 
@@ -226,16 +226,16 @@ TEST(zklaim, can_proof) {
     zklaim_gen_pk(&priv);
 
     memset(&pl, 0, sizeof(zklaim_payload));
-    pl.data0_ref = 18;
-    pl.data0_op = (enum zklaim_op) (zklaim_greater | zklaim_eq);
-    pl.data1_ref = 0;
-    pl.data1_op = zklaim_eq;
-    pl.data2_ref = 0;
-    pl.data2_op = zklaim_eq;
-    pl.data3_ref = 0;
-    pl.data3_op = zklaim_eq;
-    pl.data4_ref = 600;
-    pl.data4_op = zklaim_less;
+    pl.data_ref[0] = 18;
+    pl.data_op[0] = (enum zklaim_op) (zklaim_greater | zklaim_eq);
+    pl.data_ref[1] = 0;
+    pl.data_op[1] = zklaim_eq;
+    pl.data_ref[2] = 0;
+    pl.data_op[2] = zklaim_eq;
+    pl.data_ref[3] = 0;
+    pl.data_op[3] = zklaim_eq;
+    pl.data_ref[4] = 600;
+    pl.data_op[4] = zklaim_less;
     pl.priv = 0;
 
     zklaim_set_attr(&pl, 18, 0);
@@ -264,16 +264,16 @@ TEST(zklaim, can_handle_two_payloads) {
     zklaim_gen_pk(&priv);
 
     memset(&pl, 0, sizeof(zklaim_payload));
-    pl.data0_ref = 18;
-    pl.data0_op = (enum zklaim_op) (zklaim_greater | zklaim_eq);
-    pl.data1_ref = 0;
-    pl.data1_op = zklaim_eq;
-    pl.data2_ref = 0;
-    pl.data2_op = zklaim_eq;
-    pl.data3_ref = 0;
-    pl.data3_op = zklaim_eq;
-    pl.data4_ref = 600;
-    pl.data4_op = zklaim_less;
+    pl.data_ref[0] = 18;
+    pl.data_op[0] = (enum zklaim_op) (zklaim_greater | zklaim_eq);
+    pl.data_ref[1] = 0;
+    pl.data_op[1] = zklaim_eq;
+    pl.data_ref[2] = 0;
+    pl.data_op[2] = zklaim_eq;
+    pl.data_ref[3] = 0;
+    pl.data_op[3] = zklaim_eq;
+    pl.data_ref[4] = 600;
+    pl.data_op[4] = zklaim_less;
     pl.priv = 0;
 
     zklaim_set_attr(&pl, 18, 0);
@@ -304,16 +304,16 @@ TEST(zklaim, can_handle_three_payloads) {
     zklaim_gen_pk(&priv);
 
     memset(&pl, 0, sizeof(zklaim_payload));
-    pl.data0_ref = 18;
-    pl.data0_op = (enum zklaim_op) (zklaim_greater | zklaim_eq);
-    pl.data1_ref = 0;
-    pl.data1_op = zklaim_eq;
-    pl.data2_ref = 0;
-    pl.data2_op = zklaim_eq;
-    pl.data3_ref = 0;
-    pl.data3_op = zklaim_eq;
-    pl.data4_ref = 600;
-    pl.data4_op = zklaim_less;
+    pl.data_ref[0] = 18;
+    pl.data_op[0] = (enum zklaim_op) (zklaim_greater | zklaim_eq);
+    pl.data_ref[1] = 0;
+    pl.data_op[1] = zklaim_eq;
+    pl.data_ref[2] = 0;
+    pl.data_op[2] = zklaim_eq;
+    pl.data_ref[3] = 0;
+    pl.data_op[3] = zklaim_eq;
+    pl.data_ref[4] = 600;
+    pl.data_op[4] = zklaim_less;
     pl.priv = 0;
 
     zklaim_set_attr(&pl, 18, 0);
@@ -372,16 +372,16 @@ TEST(DISABLED_zklaim, rejects_invalid_proof) {
 TEST(zklaim, preimage_and_salt_get_cleared) {
     zklaim_payload pl;
     memset(&pl, 0, sizeof(zklaim_payload));
-    pl.data0_ref = 18;
-    pl.data0_op = (enum zklaim_op) (zklaim_greater | zklaim_eq);
-    pl.data1_ref = 0;
-    pl.data1_op = zklaim_eq;
-    pl.data2_ref = 0;
-    pl.data2_op = zklaim_eq;
-    pl.data3_ref = 0;
-    pl.data3_op = zklaim_eq;
-    pl.data4_ref = 600;
-    pl.data4_op = zklaim_less;
+    pl.data_ref[0] = 18;
+    pl.data_op[0] = (enum zklaim_op) (zklaim_greater | zklaim_eq);
+    pl.data_ref[1] = 0;
+    pl.data_op[1] = zklaim_eq;
+    pl.data_ref[2] = 0;
+    pl.data_op[2] = zklaim_eq;
+    pl.data_ref[3] = 0;
+    pl.data_op[3] = zklaim_eq;
+    pl.data_ref[4] = 600;
+    pl.data_op[4] = zklaim_less;
     pl.priv = 0;
 
     zklaim_set_attr(&pl, 18, 0);
@@ -428,29 +428,29 @@ TEST(zklaim, three_party_run) {
 
     zklaim_payload pl, pl2;
     memset(&pl, 0, sizeof(zklaim_payload));
-    pl.data0_ref = 18;
-    pl.data0_op = (enum zklaim_op) (zklaim_greater | zklaim_eq);
-    pl.data1_ref = 0;
-    pl.data1_op = zklaim_eq;
-    pl.data2_ref = 0;
-    pl.data2_op = zklaim_eq;
-    pl.data3_ref = 0;
-    pl.data3_op = zklaim_eq;
-    pl.data4_ref = 600;
-    pl.data4_op = zklaim_less;
+    pl.data_ref[0] = 18;
+    pl.data_op[0] = (enum zklaim_op) (zklaim_greater | zklaim_eq);
+    pl.data_ref[1] = 0;
+    pl.data_op[1] = zklaim_eq;
+    pl.data_ref[2] = 0;
+    pl.data_op[2] = zklaim_eq;
+    pl.data_ref[3] = 0;
+    pl.data_op[3] = zklaim_eq;
+    pl.data_ref[4] = 600;
+    pl.data_op[4] = zklaim_less;
     pl.priv = 0;
 
     memset(&pl2, 0, sizeof(zklaim_payload));
-    pl2.data0_ref = 0;
-    pl2.data0_op = zklaim_noop;
-    pl2.data1_ref = 0;
-    pl2.data1_op = zklaim_noop;
-    pl2.data2_ref = 0;
-    pl2.data2_op = zklaim_noop;
-    pl2.data3_ref = 0;
-    pl2.data3_op = zklaim_noop;
-    pl2.data4_ref = 9223372036854775807;
-    pl2.data4_op = zklaim_less_or_eq;
+    pl2.data_ref[0] = 0;
+    pl2.data_op[0] = zklaim_noop;
+    pl2.data_ref[1] = 0;
+    pl2.data_op[1] = zklaim_noop;
+    pl2.data_ref[2] = 0;
+    pl2.data_op[2] = zklaim_noop;
+    pl2.data_ref[3] = 0;
+    pl2.data_op[3] = zklaim_noop;
+    pl2.data_ref[4] = 9223372036854775807;
+    pl2.data_op[4] = zklaim_less_or_eq;
     pl2.priv = 0;
 
     zklaim_set_attr(&pl, 18, 0);

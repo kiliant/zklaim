@@ -123,24 +123,18 @@ r1cs_primary_input<FieldT> zklaim_input_map(zklaim_ctx *ctx)
     while (cur != NULL) {
         // construct reference buf
         memset(refs, 0, 512);
-        memcpy(refs, &cur->pl.data0_ref, 8);
-        memcpy(refs+8, &cur->pl.data1_ref, 8);
-        memcpy(refs+16, &cur->pl.data2_ref, 8);
-        memcpy(refs+24, &cur->pl.data3_ref, 8);
-        memcpy(refs+32, &cur->pl.data4_ref, 8);
+        memcpy(refs, &cur->pl.data_ref[0], 8);
+        memcpy(refs+8, &cur->pl.data_ref[1], 8);
+        memcpy(refs+16, &cur->pl.data_ref[2], 8);
+        memcpy(refs+24, &cur->pl.data_ref[3], 8);
+        memcpy(refs+32, &cur->pl.data_ref[4], 8);
 
         memset(ops, 0, 512);
-        set_zklaim_ops(ops, cur->pl.data0_op);
-        set_zklaim_ops(ops+8, cur->pl.data1_op);
-        set_zklaim_ops(ops+16, cur->pl.data2_op);
-        set_zklaim_ops(ops+24, cur->pl.data3_op);
-        set_zklaim_ops(ops+32, cur->pl.data4_op);
-
-        //memcpy(ops, &cur->pl.data0_op, sizeof(cur->pl.data0_op));
-        //memcpy(ops+8, &cur->pl.data0_op, sizeof(cur->pl.data0_op));
-        //memcpy(ops+16, &cur->pl.data0_op, sizeof(cur->pl.data0_op));
-        //memcpy(ops+24, &cur->pl.data0_op, sizeof(cur->pl.data0_op));
-        //memcpy(ops+32, &cur->pl.data0_op, sizeof(cur->pl.data0_op));
+        set_zklaim_ops(ops, cur->pl.data_op[0]);
+        set_zklaim_ops(ops+8, cur->pl.data_op[1]);
+        set_zklaim_ops(ops+16, cur->pl.data_op[2]);
+        set_zklaim_ops(ops+24, cur->pl.data_op[3]);
+        set_zklaim_ops(ops+32, cur->pl.data_op[4]);
 
         h = memtobv(cur->pl.hash, 256);
         refs_vec = memtobv(refs, 512);
@@ -720,18 +714,18 @@ class zklaim_gadget : public gadget<FieldT> {
             unsigned char ops[512];
             while (cur != NULL) {
                 memset(ref_in, 0, sizeof(ref_in));
-                memcpy(ref_in, &cur->pl.data0_ref, 8);
-                memcpy(ref_in+8, &cur->pl.data1_ref, 8);
-                memcpy(ref_in+16, &cur->pl.data2_ref, 8);
-                memcpy(ref_in+24, &cur->pl.data3_ref, 8);
-                memcpy(ref_in+32, &cur->pl.data4_ref, 8);
+                memcpy(ref_in, &cur->pl.data_ref[0], 8);
+                memcpy(ref_in+8, &cur->pl.data_ref[1], 8);
+                memcpy(ref_in+16, &cur->pl.data_ref[2], 8);
+                memcpy(ref_in+24, &cur->pl.data_ref[3], 8);
+                memcpy(ref_in+32, &cur->pl.data_ref[4], 8);
 
                 memset(ops, 0, 512);
-                set_zklaim_ops(ops, cur->pl.data0_op);
-                set_zklaim_ops(ops+8, cur->pl.data1_op);
-                set_zklaim_ops(ops+16, cur->pl.data2_op);
-                set_zklaim_ops(ops+24, cur->pl.data3_op);
-                set_zklaim_ops(ops+32, cur->pl.data4_op);
+                set_zklaim_ops(ops, cur->pl.data_op[0]);
+                set_zklaim_ops(ops+8, cur->pl.data_op[1]);
+                set_zklaim_ops(ops+16, cur->pl.data_op[2]);
+                set_zklaim_ops(ops+24, cur->pl.data_op[3]);
+                set_zklaim_ops(ops+32, cur->pl.data_op[4]);
                 //memcpy(ops, &cur->pl.data0_op, sizeof(cur->pl.data0_op));
                 //memcpy(ops+8, &cur->pl.data1_op, sizeof(cur->pl.data0_op));
                 //memcpy(ops+16, &cur->pl.data1_op, sizeof(cur->pl.data0_op));

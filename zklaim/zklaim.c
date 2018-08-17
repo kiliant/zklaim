@@ -170,18 +170,18 @@ void zklaim_print(zklaim_ctx *ctx){
         printf("======================================================================\n");
         printf("Format: [actual] op reference\n");
         if (cur->pl.priv != 1) {
-            printf("data%i: [%lu] %s %lu\n", 0, data0, zklaim_parse_op(cur->pl.data0_op), cur->pl.data0_ref);
-            printf("data%i: [%lu] %s %lu\n", 1, data1, zklaim_parse_op(cur->pl.data1_op), cur->pl.data1_ref);
-            printf("data%i: [%lu] %s %lu\n", 2, data2, zklaim_parse_op(cur->pl.data2_op), cur->pl.data2_ref);
-            printf("data%i: [%lu] %s %lu\n", 3, data3, zklaim_parse_op(cur->pl.data3_op), cur->pl.data3_ref);
-            printf("data%i: [%lu] %s %lu\n", 4, data4, zklaim_parse_op(cur->pl.data4_op), cur->pl.data4_ref);
+            printf("data%i: [%lu] %s %lu\n", 0, data0, zklaim_parse_op(cur->pl.data_op[0]), cur->pl.data_ref[0]);
+            printf("data%i: [%lu] %s %lu\n", 1, data1, zklaim_parse_op(cur->pl.data_op[1]), cur->pl.data_ref[1]);
+            printf("data%i: [%lu] %s %lu\n", 2, data2, zklaim_parse_op(cur->pl.data_op[2]), cur->pl.data_ref[2]);
+            printf("data%i: [%lu] %s %lu\n", 3, data3, zklaim_parse_op(cur->pl.data_op[3]), cur->pl.data_ref[3]);
+            printf("data%i: [%lu] %s %lu\n", 4, data4, zklaim_parse_op(cur->pl.data_op[4]), cur->pl.data_ref[4]);
             printf("payload salt: %lu\n", salt);
         } else {
-            printf("data%i: [hidden] %s %lu\n", 0, zklaim_parse_op(cur->pl.data0_op), cur->pl.data0_ref);
-            printf("data%i: [hidden] %s %lu\n", 1, zklaim_parse_op(cur->pl.data1_op), cur->pl.data1_ref);
-            printf("data%i: [hidden] %s %lu\n", 2, zklaim_parse_op(cur->pl.data2_op), cur->pl.data2_ref);
-            printf("data%i: [hidden] %s %lu\n", 3, zklaim_parse_op(cur->pl.data3_op), cur->pl.data3_ref);
-            printf("data%i: [hidden] %s %lu\n", 4, zklaim_parse_op(cur->pl.data4_op), cur->pl.data4_ref);
+            printf("data%i: [hidden] %s %lu\n", 0, zklaim_parse_op(cur->pl.data_op[0]), cur->pl.data_ref[0]);
+            printf("data%i: [hidden] %s %lu\n", 1, zklaim_parse_op(cur->pl.data_op[1]), cur->pl.data_ref[1]);
+            printf("data%i: [hidden] %s %lu\n", 2, zklaim_parse_op(cur->pl.data_op[2]), cur->pl.data_ref[2]);
+            printf("data%i: [hidden] %s %lu\n", 3, zklaim_parse_op(cur->pl.data_op[3]), cur->pl.data_ref[3]);
+            printf("data%i: [hidden] %s %lu\n", 4, zklaim_parse_op(cur->pl.data_op[4]), cur->pl.data_ref[4]);
             printf("payload salt: [hidden]\n");
         }
         printf("Hash: ");
