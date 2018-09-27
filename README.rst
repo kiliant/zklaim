@@ -6,6 +6,9 @@ zklaim
 
 Instructions
 ~~~~~~~~~~~~
+#. install dependencies
+    - on Ubuntu 18.04:
+    ``sudo apt-get install build-essential cmake git libgmp3-dev libprocps-dev python-markdown libboost-all-dev libssl-dev libgcrypt-dev``
 #. clone this repo ;)
 #. to pull in the submodules: ``git submodule update --init --recursive``
 #. to update the submodules at any time: ``git submodule update --recursive --remote``
