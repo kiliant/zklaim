@@ -39,6 +39,7 @@
 #define ZKLAIM_ERROR 1
 #define ZKLAIM_INVALID_SIGNATURE 2
 #define ZKLAIM_INVALID_PROOF 3
+#define ZKLAIM_MAX_PAYLOAD_ATTRIBUTES 5
 
 // enum specifying the operations of zklaim comparisons
 enum zklaim_op {
@@ -61,16 +62,8 @@ typedef struct zklaim_proof zklaim_proof;
 typedef struct zklaim_header zklaim_header;
 
 struct zklaim_payload {
-    uint64_t data0_ref;
-    enum zklaim_op data0_op;
-    uint64_t data1_ref;
-    enum zklaim_op data1_op;
-    uint64_t data2_ref;
-    enum zklaim_op data2_op;
-    uint64_t data3_ref;
-    enum zklaim_op data3_op;
-    uint64_t data4_ref;
-    enum zklaim_op data4_op;
+    uint64_t data_ref[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
+    enum zklaim_op data_op[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
     uint64_t salt;
     unsigned char hash[32];
     uint8_t priv;
