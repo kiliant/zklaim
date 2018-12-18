@@ -3,6 +3,9 @@ image: docker:stable
 services:
   - docker:dind
 
+before_script:
+    - git submodule update --init --recursive
+
 build:
   stage: build
   script:
