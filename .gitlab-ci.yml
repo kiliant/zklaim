@@ -4,6 +4,7 @@ services:
   - docker:dind
 
 before_script:
+    - apk add git
     - git submodule update --init --recursive
 
 build:
