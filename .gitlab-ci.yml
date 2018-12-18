@@ -1,0 +1,11 @@
+image: docker:stable
+
+services:
+  - docker:dind
+
+build:
+  stage: build
+  script:
+        - docker build -t zklaim-test .
+        - docker run zklaim-test
+
