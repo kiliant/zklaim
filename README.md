@@ -1,6 +1,6 @@
 # zklaim
 
-[![Build Status](https://travis-ci.org/kiliant/zklaim.svg?branch=master)](https://travis-ci.org/kiliant/zklaim)
+[![pipeline status](https://gitlab.com/kiliant/zklaim/badges/master/pipeline.svg)](https://gitlab.com/kiliant/zklaim/commits/master)
 
 ## Instructions
 1. install dependencies
