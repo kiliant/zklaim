@@ -585,6 +585,13 @@ class zklaim_gadget : public gadget<FieldT> {
             // multipacking gadget constraints (for input validation)
             unpack_inputs->generate_r1cs_constraints(true);
 
+            // bind the values used in the comparisons to the hashed pre-image (PL) and to the
+            // public reference values (REF) and operations (OPS); without these, prover can
+            // choose them freely. bitness is already enforced via r_vars and unpack_inputs
+            pack_PL->generate_r1cs_constraints(false);
+            pack_REF->generate_r1cs_constraints(false);
+            pack_OPS->generate_r1cs_constraints(false);
+
             // sanity check
             generate_r1cs_equals_const_constraint<FieldT>(this->pb, zero, FieldT::zero(), "zero");
 
