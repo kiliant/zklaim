@@ -27,9 +27,7 @@
 #include <zklaim/zklaim_hash.h>
 #include <openssl/sha.h>
 #include <stdio.h>
-#include <fcntl.h>
 #include <string.h>
-#include <unistd.h>
 #include <arpa/inet.h>
 
 zklaim_ctx* zklaim_context_new() {
@@ -112,9 +110,7 @@ void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl) {
 }
 
 void zklaim_hash_pl(zklaim_payload *pl) {
-    int rand = open("/dev/urandom", O_RDONLY);
-    read(rand, &pl->salt, sizeof(pl->salt));
-    close(rand);
+    gcry_randomize(&pl->salt, sizeof(pl->salt), GCRY_STRONG_RANDOM);
     // copy over salt to pre
     memcpy((pl->pre + 5*sizeof(uint64_t)), &pl->salt, sizeof(uint64_t));
     SHA256((unsigned char*) pl->pre, sizeof(pl->pre), pl->hash);
