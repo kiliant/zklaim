@@ -17,7 +17,7 @@ add_library(
     zklaim.c
 )
 
-target_link_libraries(zklaim snark gcrypt)
+target_link_libraries(zklaim snark PkgConfig::GCRYPT OpenSSL::Crypto)
 set_target_properties(zklaim PROPERTIES LINKER_LANGUAGE C)
 
 #add_executable(
@@ -48,37 +48,19 @@ add_executable(
 
 set_target_properties(main PROPERTIES LINKER_LANGUAGE C)
 
-target_link_libraries(main zklaim gcrypt)
+target_link_libraries(main zklaim PkgConfig::GCRYPT)
 
-target_link_libraries(main_benchmark zklaim gcrypt pthread)
+target_link_libraries(main_benchmark zklaim PkgConfig::GCRYPT pthread)
 
 add_executable(
     bttestc
 
     tests/bttest.cpp)
 
-target_link_libraries(bttestc snark zklaim gcrypt gtest)
-
-target_include_directories(
-  bttestc
-
-  PUBLIC
-  ${DEPENDS_DIR}/libsnark
-  ${DEPENDS_DIR}/libsnark/depends/libff
-  ${DEPENDS_DIR}/libsnark/depends/libfqfft
-)
-
-target_include_directories(
-  zklaim
-
-  PUBLIC
-  ${DEPENDS_DIR}/libsnark
-  ${DEPENDS_DIR}/libsnark/depends/libff
-  ${DEPENDS_DIR}/libsnark/depends/libfqfft
-)
+target_link_libraries(bttestc snark zklaim PkgConfig::GCRYPT gtest)
 
 install(
-    DIRECTORY "" DESTINATION "include/zklaim"
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ DESTINATION "include/zklaim"
     FILES_MATCHING
     PATTERN "*.h"
     PATTERN "tests" EXCLUDE
@@ -92,14 +74,6 @@ install(
 
 #add_executable(lamport_test tests/lamport_test.cpp)
 #target_link_libraries(lamport_test ssl crypto gtest)
-
-target_include_directories(
-  main
-
-  PUBLIC
-  ${DEPENDS_DIR}/libsnark
-  ${DEPENDS_DIR}/libsnark/depends/libfqfft
-)
 
 
 # for now managing tests in a custom target
