@@ -236,162 +236,145 @@ int zklaim_gen_pk(gcry_sexp_t *priv) {
 }
 
 int zklaim_get_pub(gcry_sexp_t priv, gcry_sexp_t *pub) {
-    gcry_mpi_t pub_key;
-    gcry_sexp_t q;
-    gcry_error_t err;
-    // TODO: this is ugly, but works for now
-    q = gcry_sexp_find_token(priv, "q", 0);
-    pub_key = gcry_sexp_nth_mpi(q, 1, GCRYMPI_FMT_USG);
-
-
-    err = gcry_sexp_build(pub, NULL, "(key-data (public-key (ecc (curve Ed25519) (q %M))))", pub_key);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        gcry_mpi_release(pub_key);
+    unsigned char *point;
+    size_t len;
+    if (zklaim_pub2buf(priv, &point, &len)) {
         return 1;
     }
-
-    gcry_sexp_release(q);
-    gcry_mpi_release(pub_key);
-    return 0;
+    int res = zklaim_buf2pub(point, len, pub);
+    free(point);
+    return res;
 }
 
 int zklaim_pub2buf(gcry_sexp_t pub, unsigned char **buf, size_t *len) {
-    size_t nbytes;
-    gcry_error_t err;
-    gcry_mpi_t pub_mpi;
-    gcry_sexp_t pub_q;
-
-    *buf = (unsigned char*) malloc(32);
-
-    *len = 32;
-
-    pub_q = gcry_sexp_find_token(pub, "q", 0);
-
-    pub_mpi = gcry_sexp_nth_mpi(pub_q, 1, GCRYMPI_FMT_USG);
-
-    err = gcry_mpi_print(GCRYMPI_FMT_USG, *buf, 32, &nbytes, pub_mpi);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        gcry_sexp_release(pub_q);
-        gcry_mpi_release(pub_mpi);
-
+    if (pub == NULL || buf == NULL || len == NULL) {
         return 1;
     }
+    *buf = NULL;
+    *len = 0;
+    gcry_sexp_t q = gcry_sexp_find_token(pub, "q", 0);
+    if (q == NULL) {
+        return 1;
+    }
+    size_t point_len;
+    const unsigned char *point = (const unsigned char*) gcry_sexp_nth_data(q, 1, &point_len);
 
-    pad_msb(*buf, nbytes, 32);
-
-    gcry_sexp_release(pub_q);
-    gcry_mpi_release(pub_mpi);
-
+    // Ed25519 points are bytes, not integers. Accept libgcrypt's optional
+    // compressed-point prefix, but keep the serialized format at 32 bytes.
+    if (point != NULL && point_len == 33 && point[0] == 0x40) {
+        ++point;
+        --point_len;
+    }
+    if (point == NULL || point_len != 32) {
+        gcry_sexp_release(q);
+        return 1;
+    }
+    *buf = (unsigned char*) malloc(32);
+    if (*buf == NULL) {
+        gcry_sexp_release(q);
+        return 1;
+    }
+    memcpy(*buf, point, 32);
+    *len = 32;
+    gcry_sexp_release(q);
     return 0;
 }
 
 int zklaim_buf2pub(unsigned char *buf, size_t len, gcry_sexp_t *pub) {
     gcry_error_t err;
-    gcry_mpi_t pub_key;
-
-    err = gcry_mpi_scan(&pub_key, GCRYMPI_FMT_USG, buf, len, NULL);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        gcry_mpi_release(pub_key);
+    if (buf == NULL || len != 32 || pub == NULL) {
         return 1;
     }
+    // Explicitly mark the native compressed encoding and preserve leading zeros.
+    unsigned char point[33];
+    point[0] = 0x40;
+    memcpy(point + 1, buf, 32);
 
-    err = gcry_sexp_build(pub, NULL, "(key-data (public-key (ecc (curve Ed25519) (q %M))))", pub_key);
+    err = gcry_sexp_build(pub, NULL, "(key-data (public-key (ecc (curve Ed25519) (q %b))))", 33, point);
     if (err != GPG_ERR_NO_ERROR) {
         fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        gcry_mpi_release(pub_key);
         return 1;
     }
-
-    gcry_mpi_release(pub_key);
     return 0;
 }
 
 int zklaim_pk2buf(gcry_sexp_t priv, unsigned char **buf, size_t *len) {
-    size_t sized, sizeq;
-
-    gcry_sexp_t d, q;
-    gcry_mpi_t q_mpi, d_mpi;
+    size_t sized, point_len;
+    unsigned char *point;
+    gcry_sexp_t d;
+    gcry_mpi_t d_mpi;
     gcry_error_t err;
 
-    q = gcry_sexp_find_token(priv, "q", 0);
+    if (buf == NULL || zklaim_pub2buf(priv, &point, &point_len)) {
+        return 1;
+    }
     d = gcry_sexp_find_token(priv, "d", 0);
-
-    q_mpi = gcry_sexp_nth_mpi(q, 1, GCRYMPI_FMT_USG);
+    if (d == NULL) {
+        free(point);
+        return 1;
+    }
     d_mpi = gcry_sexp_nth_mpi(d, 1, GCRYMPI_FMT_USG);
-
-    *buf = (unsigned char*) malloc(64);
-
-    err = gcry_mpi_print(GCRYMPI_FMT_USG, *buf, 32, &sizeq, q_mpi);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        gcry_sexp_release(q);
+    if (d_mpi == NULL) {
+        free(point);
         gcry_sexp_release(d);
-        gcry_mpi_release(q_mpi);
-        gcry_mpi_release(d_mpi);
-
         return 1;
     }
 
+    *buf = (unsigned char*) malloc(64);
+    if (*buf == NULL) {
+        free(point);
+        gcry_sexp_release(d);
+        gcry_mpi_release(d_mpi);
+        return 1;
+    }
+    memcpy(*buf, point, point_len);
+    free(point);
     err = gcry_mpi_print(GCRYMPI_FMT_USG, *buf + 32, 32, &sized, d_mpi);
     if (err != GPG_ERR_NO_ERROR) {
         fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        gcry_sexp_release(q);
+        free(*buf);
+        *buf = NULL;
         gcry_sexp_release(d);
-        gcry_mpi_release(q_mpi);
         gcry_mpi_release(d_mpi);
-
         return 1;
     }
 
-    pad_msb(*buf, sizeq, 32);
     pad_msb(*buf+32, sized, 32);
 
     if (len)
         *len = 64;
 
-    gcry_sexp_release(q);
     gcry_sexp_release(d);
-    gcry_mpi_release(q_mpi);
     gcry_mpi_release(d_mpi);
 
     return 0;
 }
 
 int zklaim_buf2pk(unsigned char *buf, size_t len, gcry_sexp_t *priv) {
-    gcry_mpi_t q, d;
+    gcry_mpi_t d;
     gcry_error_t err;
-    size_t readb;
+    if (buf == NULL || len != 64 || priv == NULL) {
+        return 1;
+    }
+    unsigned char point[33];
+    point[0] = 0x40;
+    memcpy(point + 1, buf, 32);
 
-    err = gcry_mpi_scan(&q, GCRYMPI_FMT_USG, buf, 32, &readb);
+    err = gcry_mpi_scan(&d, GCRYMPI_FMT_USG, buf + 32, 32, NULL);
     if (err != GPG_ERR_NO_ERROR) {
         fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
         return 1;
     }
 
-    err = gcry_mpi_scan(&d, GCRYMPI_FMT_USG, buf + 32, 32, &readb);
+    err = gcry_sexp_build(priv, NULL, "(key-data (public-key (ecc (curve Ed25519) (q %b))) (private-key (ecc (curve Ed25519) (q %b) (d %M))))", 33, point, 33, point, d);
     if (err != GPG_ERR_NO_ERROR) {
         fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        gcry_mpi_release(q);
-
-        return 1;
-    }
-
-    err = gcry_sexp_build(priv, NULL, "(key-data (public-key (ecc (curve Ed25519) (q %M))) (private-key (ecc ((curve Ed25519) (q %M) (d %M)))))", q, q, d);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        gcry_mpi_release(q);
         gcry_mpi_release(d);
 
         return 1;
     }
 
-    gcry_mpi_release(q);
     gcry_mpi_release(d);
-    return 0;
-
     return 0;
 }
 
