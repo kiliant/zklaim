@@ -21,7 +21,6 @@
 #include <libsnark/zk_proof_systems/ppzksnark/r1cs_gg_ppzksnark/r1cs_gg_ppzksnark.hpp>
 #include <libsnark/common/default_types/r1cs_ppzksnark_pp.hpp>
 #include <libff/common/utils.hpp>
-#include <boost/optional.hpp>
 
 #include<vector>
 
@@ -102,11 +101,12 @@ r1cs_gg_ppzksnark_keypair<ppzksnark_ppT> generate_keypair(zklaim_ctx *ctx)
  *
  * @param proving_key the proving key to utilize
  * @param ctx the context from which to extract public and private inputs
- * @result optional<proof>
+ * @param proof receives the generated proof
+ * @result true if a proof was generated, false if the constraint system is not satisfied
  */
     template<typename ppzksnark_ppT>
-boost::optional<r1cs_gg_ppzksnark_proof<ppzksnark_ppT>> generate_proof(r1cs_gg_ppzksnark_proving_key<ppzksnark_ppT> proving_key,
-        zklaim_ctx *ctx)
+bool generate_proof(r1cs_gg_ppzksnark_proving_key<ppzksnark_ppT> proving_key,
+        zklaim_ctx *ctx, r1cs_gg_ppzksnark_proof<ppzksnark_ppT> &proof)
 {
     typedef Fr<ppzksnark_ppT> FieldT;
 
@@ -120,10 +120,11 @@ boost::optional<r1cs_gg_ppzksnark_proof<ppzksnark_ppT>> generate_proof(r1cs_gg_p
     // only generate proof if system is satisfied (otherwise proof will be invalid anyways)
     if (!pb.is_satisfied()) {
         cout << "system not satisfied!! not creating proof." << endl;
-        return boost::none;
+        return false;
     }
 
-    return r1cs_gg_ppzksnark_prover<ppzksnark_ppT>(proving_key, pb.primary_input(), pb.auxiliary_input());
+    proof = r1cs_gg_ppzksnark_prover<ppzksnark_ppT>(proving_key, pb.primary_input(), pb.auxiliary_input());
+    return true;
 }
 
 #endif // SNARK_CPP

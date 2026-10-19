@@ -1,13 +1,23 @@
 # this file is taken from libsnark, where it is licensed under the MIT license
 
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 3.13)
 
 project(zklaim C CXX)
 
 enable_testing()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS "ON")
-set(CMAKE_CXX_FLAGS "-fPIC" CACHE INTERNAL "" FORCE)
+# libff is linked statically into the shared libzklaim
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# Default to RelWithDebInfo configuration if no configuration is explicitly specified.
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo CACHE STRING "Build type on single-configuration generators" FORCE)
+endif()
+
 set(
   CURVE
   "ALT_BN128"
@@ -17,19 +27,11 @@ set(
 )
 
 set(
-  DEPENDS_DIR
-  "${CMAKE_CURRENT_SOURCE_DIR}/lib"
-  CACHE
-  STRING
-  "Optionally specify the dependency installation directory relative to the source directory (default: inside dependency folder)"
-)
-
-set(
   OPT_FLAGS
   ""
   CACHE
   STRING
-  "Override C++ compiler optimization flags"
+  "Additional C++ compiler optimization flags, e.g. -march=native"
 )
 
 option(
@@ -41,7 +43,7 @@ option(
 option(
   WITH_PROCPS
   "Use procps for memory profiling"
-  ON
+  OFF
 )
 
 option(
@@ -50,17 +52,12 @@ option(
   OFF
 )
 
-if(CMAKE_COMPILER_IS_GNUCXX OR "${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
+if(CMAKE_COMPILER_IS_GNUCXX OR "${CMAKE_CXX_COMPILER_ID}" MATCHES "Clang")
   # Common compilation flags and warning configuration
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -Wall -Wextra -Wfatal-errors -pthread")
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -Wextra -Wfatal-errors -pthread")
 
   if("${MULTICORE}")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fopenmp")
-  endif()
-
-   # Default optimizations flags (to override, use -DOPT_FLAGS=...)
-  if("${OPT_FLAGS}" STREQUAL "")
-    set(OPT_FLAGS "-ggdb3 -O2 -march=native -mtune=native")
   endif()
 endif()
 
@@ -80,7 +77,10 @@ endif()
 
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OPT_FLAGS}")
 
-include(FindPkgConfig)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(GCRYPT REQUIRED IMPORTED_TARGET libgcrypt)
+find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+
 if("${WITH_PROCPS}")
   pkg_check_modules(PROCPS REQUIRED libprocps)
 else()
