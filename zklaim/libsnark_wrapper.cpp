@@ -30,7 +30,6 @@
 #include <libsnark/zk_proof_systems/ppzksnark/r1cs_ppzksnark/r1cs_ppzksnark.hpp>
 #include <libsnark/common/default_types/r1cs_ppzksnark_pp.hpp>
 #include <libff/common/utils.hpp>
-#include <boost/optional.hpp>
 
 #include "snark.cpp"
 
@@ -229,8 +228,8 @@ int libsnark_prove(zklaim_ctx *ctx) {
 
     libsnark_import_pk(&pk, ctx->pk, ctx->pk_size);
 
-    auto libsnark_proof = generate_proof<ppT>(pk, ctx);
-    if (libsnark_proof == boost::none) {
+    r1cs_gg_ppzksnark_proof<ppT> libsnark_proof;
+    if (!generate_proof<ppT>(pk, ctx, libsnark_proof)) {
 #ifndef DEBUG
         fflush(stdout);
         dup2(stdout_copy, STDOUT_FILENO);
@@ -239,7 +238,7 @@ int libsnark_prove(zklaim_ctx *ctx) {
         return 1;
     }
 
-    ctx->proof_size = libsnark_export_proof(libsnark_proof.get(), &ctx->proof);
+    ctx->proof_size = libsnark_export_proof(libsnark_proof, &ctx->proof);
 
 #ifndef DEBUG
     fflush(stdout);

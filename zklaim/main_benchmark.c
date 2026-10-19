@@ -171,9 +171,10 @@ int worker(int k) {
     return ZKLAIM_OK;
 }
 
-void* thread_work() {
+void* thread_work(void* arg) {
 #define RUNS 30
 #define MAX_PL 20
+    (void) arg;
     gcry_check_version(GCRYPT_VERSION);
     for (int i=1; i<=MAX_PL; i++) {
         for (int k=0; k<RUNS; k++) {
