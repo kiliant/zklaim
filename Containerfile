@@ -1,11 +1,12 @@
-FROM base/archlinux:latest
-MAINTAINER Thomas KILIAN
+FROM docker.io/library/archlinux:latest
+LABEL maintainer="Thomas KILIAN"
 
-RUN pacman -Syu --noconfirm && \
-    pacman -S --noconfirm make cmake git clang gcc pkg-config boost python
+RUN pacman -Syu --noconfirm --needed cmake gcc make pkgconf gmp libgcrypt openssl
 
-WORKDIR /root
+WORKDIR /root/zklaim
 
-ADD . /root/
+COPY . .
 
-CMD cd /root && touch build && rm -r build && mkdir -p build && cd build && cmake .. && make install && make bttest
+RUN cmake -S . -B build && cmake --build build --parallel && cmake --install build
+
+CMD ["cmake", "--build", "build", "--target", "bttest"]
