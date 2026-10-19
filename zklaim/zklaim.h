@@ -162,7 +162,8 @@ int zklaim_ctx_verify(zklaim_ctx *ctx);
  *
  * @param ctx the context to sign
  * @param priv the private key used for creating the signature
- * @result ZKLAIM_OK on success
+ * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if signing or serialization fails.
+ *         On failure, the existing context signature is unchanged.
  */
 int zklaim_ctx_sign(zklaim_ctx*, gcry_sexp_t);
 

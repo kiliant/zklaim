@@ -46,6 +46,10 @@ int zklaim_calculate_hash(unsigned char *buf, size_t len, unsigned char **dgst) 
     }
 
     *dgst = (unsigned char*) malloc(32);
+    if (*dgst == NULL) {
+        gcry_md_close(hash);
+        return ZKLAIM_ERROR;
+    }
     memcpy(*dgst, dgst_tmp, 32);
 
     gcry_md_close(hash);

@@ -210,12 +210,16 @@ void zklaim_clear_pres(zklaim_ctx *ctx) {
     }
 }
 
-void plain_ctx(zklaim_ctx *ctx, unsigned char **buf, size_t *total_length) {
+int plain_ctx(zklaim_ctx *ctx, unsigned char **buf, size_t *total_length) {
     size_t tl;
     // lay out structure in buffer
     tl = ctx->num_of_payloads * sizeof(((zklaim_payload*)0)->hash);
     tl += ctx->vk_size;
-    *buf = (unsigned char*) calloc(1, tl);
+    *total_length = 0;
+    *buf = (unsigned char*) calloc(1, tl ? tl : 1);
+    if (*buf == NULL) {
+        return ZKLAIM_ERROR;
+    }
 
     // serialize payloads
     zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
@@ -225,9 +229,12 @@ void plain_ctx(zklaim_ctx *ctx, unsigned char **buf, size_t *total_length) {
     }
 
     // serialize verification key
-    memcpy(*buf + ctx->num_of_payloads * sizeof(((zklaim_payload*)0)->hash), ctx->vk, ctx->vk_size);
+    if (ctx->vk_size > 0) {
+        memcpy(*buf + ctx->num_of_payloads * sizeof(((zklaim_payload*)0)->hash), ctx->vk, ctx->vk_size);
+    }
 
     *total_length = tl;
+    return ZKLAIM_OK;
 }
 
 int zklaim_ctx_verify(zklaim_ctx *ctx) {
@@ -243,10 +250,15 @@ int zklaim_ctx_verify(zklaim_ctx *ctx) {
 
     if (zklaim_buf2pub(ctx->pub_key, sizeof(ctx->pub_key), &pub)) {
         fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "could not load pub");
+        gcry_sexp_release(sig);
         return ZKLAIM_ERROR;
     }
 
-    plain_ctx(ctx, &buf, &total_length);
+    if (plain_ctx(ctx, &buf, &total_length) != ZKLAIM_OK) {
+        gcry_sexp_release(pub);
+        gcry_sexp_release(sig);
+        return ZKLAIM_ERROR;
+    }
 
     //unsigned char *md;
     //zklaim_calculate_hash(buf, total_length, &md);
@@ -282,42 +294,29 @@ int zklaim_ctx_verify(zklaim_ctx *ctx) {
 }
 
 int zklaim_ctx_sign(zklaim_ctx *ctx, gcry_sexp_t priv) {
-    int res = 0;
-    // TODO: insert
-    unsigned char *buf;
-    size_t total_length;
+    int res = ZKLAIM_ERROR;
+    unsigned char *buf = NULL;
+    unsigned char *sigbuf = NULL;
+    size_t total_length = 0;
+    size_t sigsize = 0;
+    gcry_sexp_t sig = NULL;
 
-    plain_ctx(ctx, &buf, &total_length);
-
-    // sign the buffer and return res
-    gcry_sexp_t sig;
-
-    //unsigned char *md;
-    //zklaim_calculate_hash(buf, total_length, &md);
-    //printf("-> signing hash (%zu): ", total_length);
-    //print_hex(md, 32);
-    //printf("\n------\n");
-    //print_hex(buf, total_length);
-    //free(md);
-    //printf("\n");
-
-    zklaim_sign(buf, total_length, &sig, priv);
-
-    size_t sigsize;
-    unsigned char* sigbuf;
-    zklaim_sig2buf(sig, &sigbuf, &sigsize);
-
-    if (sigsize != sizeof(ctx->signature)) {
-        gcry_sexp_release(sig);
-        return 1;
+    if (ctx == NULL || priv == NULL) {
+        return ZKLAIM_ERROR;
+    }
+    if (plain_ctx(ctx, &buf, &total_length) != ZKLAIM_OK ||
+        zklaim_sign(buf, total_length, &sig, priv) != ZKLAIM_OK ||
+        zklaim_sig2buf(sig, &sigbuf, &sigsize) != ZKLAIM_OK ||
+        sigbuf == NULL || sigsize != sizeof(ctx->signature)) {
+        goto cleanup;
     }
 
     memcpy(ctx->signature, sigbuf, sizeof(ctx->signature));
+    res = ZKLAIM_OK;
 
+cleanup:
     gcry_sexp_release(sig);
-
     free(sigbuf);
-
     free(buf);
     return res;
 }
