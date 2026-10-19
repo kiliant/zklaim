@@ -1,3 +1,8 @@
+.. note::
+   This describes the original C++ proof of concept (``main.cpp``, ``gadget.hpp``, Lamport and Merkle code),
+   which lives in this ``other/`` directory and is no longer built. See the top-level ``README.md`` for the
+   current C library.
+
 Overview & PoC
 ~~~~~~~~~~~~~~
 Current Mapping depicted within PoC:
