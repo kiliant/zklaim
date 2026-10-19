@@ -1,4 +1,6 @@
 #include <gtest/gtest.h>
+#include <sstream>
+#include "../snark.cpp"
 extern "C" {
 #include <zklaim/zklaim.h>
 }
@@ -360,8 +362,82 @@ TEST(DISABLED_zklaim, detect_forged_signature) {
     // TODO
 }
 
-TEST(DISABLED_zklaim, detect_forged_values_in_circuit) {
-    // TODO
+enum zklaim_test_forgery {
+    forge_nothing,
+    forge_value,
+    forge_reference,
+    forge_operation
+};
+
+/**
+ * builds the circuit for a payload with attribute #0 = 15 and the public statement
+ * "attribute #0 >= ref", fills in the honest witness and then tampers with it as a
+ * malicious prover would
+ *
+ * @return whether the (possibly tampered) witness satisfies the circuit
+ */
+static bool zklaim_test_circuit_accepts(uint64_t ref, enum zklaim_test_forgery forgery) {
+    typedef libff::Fr<default_r1cs_ppzksnark_pp> FieldT;
+    default_r1cs_ppzksnark_pp::init_public_params();
+
+    zklaim_payload pl;
+    memset(&pl, 0, sizeof(zklaim_payload));
+    for (int i = 0; i < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; i++)
+        pl.data_op[i] = zklaim_noop;
+    pl.data_ref[0] = ref;
+    pl.data_op[0] = zklaim_greater_or_eq;
+    zklaim_set_attr(&pl, 15, 0);
+
+    zklaim_ctx *ctx = zklaim_context_new();
+    zklaim_add_pl(ctx, pl);
+    zklaim_hash_ctx(ctx);
+
+    protoboard<FieldT> pb;
+    zklaim_gadget<FieldT> g(pb, ctx);
+    g.generate_r1cs_constraints();
+
+    // generate_r1cs_witness() dumps witness values to cout, keep test output readable
+    std::stringstream sink;
+    std::streambuf *cout_buf = std::cout.rdbuf(sink.rdbuf());
+    g.generate_r1cs_witness(ctx);
+    std::cout.rdbuf(cout_buf);
+
+    switch (forgery) {
+        case forge_value:
+            // claim attribute #0 is 99 instead of the hashed (and signed) 15
+            pb.val(*g.data0[0]) = FieldT(99);
+            pb.val(g.plvars[0]) = FieldT(99);
+            g.data0_cgs[0]->generate_r1cs_witness();
+            break;
+        case forge_reference:
+            // compare against 10 instead of the public reference value
+            pb.val(g.refvals[0]) = FieldT(10);
+            g.data0_cgs[0]->generate_r1cs_witness();
+            break;
+        case forge_operation:
+            // turn the public ">=" into "noop"
+            for (int k = 0; k < 7; k++)
+                pb.val(g.opsvals[k]) = FieldT::zero();
+            pb.val(g.opsvals[6]) = FieldT::one();
+            break;
+        case forge_nothing:
+            break;
+    }
+
+    bool res = pb.is_satisfied();
+    zklaim_ctx_free(ctx);
+    return res;
+}
+
+TEST(zklaim, detect_forged_values_in_circuit) {
+    // honest witnesses: 15 >= 10 holds, 15 >= 18 does not
+    ASSERT_TRUE(zklaim_test_circuit_accepts(10, forge_nothing));
+    ASSERT_FALSE(zklaim_test_circuit_accepts(18, forge_nothing));
+
+    // tampering with the witness must not make 15 >= 18 provable
+    EXPECT_FALSE(zklaim_test_circuit_accepts(18, forge_value));
+    EXPECT_FALSE(zklaim_test_circuit_accepts(18, forge_reference));
+    EXPECT_FALSE(zklaim_test_circuit_accepts(18, forge_operation));
 }
 
 TEST(DISABLED_zklaim, rejects_invalid_proof) {
