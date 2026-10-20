@@ -13,6 +13,85 @@ TEST(zklaim_ecc, can_create_key) {
     CHECK_GCRY_ERR(gcry_pk_testkey(priv));
 }
 
+TEST(zklaim_ecc, signature_round_trip_verifies) {
+    gcry_sexp_t priv, pub, sig, restored;
+    ASSERT_EQ(0, zklaim_gen_pk(&priv));
+    ASSERT_EQ(0, zklaim_get_pub(priv, &pub));
+    unsigned char message[] = "signature round trip";
+    ASSERT_EQ(0, zklaim_sign(message, sizeof(message), &sig, priv));
+    unsigned char *buf = nullptr;
+    size_t len = 0;
+    ASSERT_EQ(0, zklaim_sig2buf(sig, &buf, &len));
+    ASSERT_EQ(64u, len);
+    ASSERT_EQ(0, zklaim_buf2sig(buf, len, &restored));
+    EXPECT_EQ(0, zklaim_verify(message, sizeof(message), restored, pub));
+    message[0] ^= 1;
+    EXPECT_NE(0, zklaim_verify(message, sizeof(message), restored, pub));
+    free(buf);
+    gcry_sexp_release(restored);
+    gcry_sexp_release(sig);
+    gcry_sexp_release(pub);
+    gcry_sexp_release(priv);
+}
+
+TEST(zklaim_ecc, rejects_malformed_signatures_without_output) {
+    const char *expressions[] = {
+        "(sig-val(rsa(s #01#)))",
+        "(sig-val(ecdsa(r #01#)))",
+        "(sig-val(ecdsa(s #01#)))",
+        "(sig-val(ecdsa(r)(s #01#)))"
+    };
+    for (const char *expression : expressions) {
+        SCOPED_TRACE(expression);
+        gcry_sexp_t sig;
+        CHECK_GCRY_ERR(gcry_sexp_new(&sig, expression, 0, 1));
+        unsigned char *buf = nullptr;
+        size_t len = 99;
+        EXPECT_NE(0, zklaim_sig2buf(sig, &buf, &len));
+        EXPECT_EQ(nullptr, buf);
+        EXPECT_EQ(0u, len);
+        gcry_sexp_release(sig);
+    }
+}
+
+TEST(zklaim_ecc, rejects_oversized_signature_components_without_output) {
+    gcry_mpi_t large = gcry_mpi_new(257);
+    gcry_mpi_set_bit(large, 256);
+    gcry_mpi_t one = gcry_mpi_set_ui(NULL, 1);
+    for (bool large_r : {false, true}) {
+        SCOPED_TRACE(large_r);
+        gcry_sexp_t sig;
+        CHECK_GCRY_ERR(gcry_sexp_build(&sig, NULL,
+            "(sig-val(ecdsa(r %M)(s %M)))", large_r ? large : one, large_r ? one : large));
+        unsigned char *buf = nullptr;
+        size_t len = 99;
+        EXPECT_NE(0, zklaim_sig2buf(sig, &buf, &len));
+        EXPECT_EQ(nullptr, buf);
+        EXPECT_EQ(0u, len);
+        gcry_sexp_release(sig);
+    }
+    gcry_mpi_release(one);
+    gcry_mpi_release(large);
+}
+
+TEST(zklaim_ecc, rejects_invalid_signature_buffers) {
+    unsigned char buf[65] = {0};
+    gcry_sexp_t sig = nullptr;
+    for (size_t len : {0u, 63u, 65u}) {
+        EXPECT_NE(0, zklaim_buf2sig(buf, len, &sig));
+        EXPECT_EQ(nullptr, sig);
+    }
+    EXPECT_NE(0, zklaim_buf2sig(NULL, 64, &sig));
+    EXPECT_EQ(nullptr, sig);
+    unsigned char *encoded = nullptr;
+    size_t len = 99;
+    EXPECT_NE(0, zklaim_sig2buf(NULL, &encoded, &len));
+    EXPECT_EQ(nullptr, encoded);
+    EXPECT_EQ(0u, len);
+    EXPECT_NE(0, zklaim_sign(buf, sizeof(buf), &sig, NULL));
+    EXPECT_EQ(nullptr, sig);
+}
+
 TEST(zklaim_ecc, can_get_pub) {
     unsigned char *privbuf = (unsigned char*) malloc(64);
     unsigned char *pubbuf, *pubbuf_ref = (unsigned char*) malloc(32);
