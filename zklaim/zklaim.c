@@ -186,13 +186,14 @@ void zklaim_print(zklaim_ctx *ctx){
 }
 
 // set attribute at given position within pl
-void zklaim_set_attr(zklaim_payload *pl, uint64_t attr, uint8_t pos) {
-    if (pos>5) {
-        fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "zklaim only supports 5 attribute slots per payload");
+int zklaim_set_attr(zklaim_payload *pl, uint64_t attr, uint8_t pos) {
+    if (pos >= ZKLAIM_MAX_PAYLOAD_ATTRIBUTES) {
+        fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "attribute position is out of range");
 
-        return;
+        return ZKLAIM_ERROR;
     }
     memcpy((pl->pre + pos*8), &attr, 8);
+    return ZKLAIM_OK;
 }
 
 // clears all pre-images in the context
