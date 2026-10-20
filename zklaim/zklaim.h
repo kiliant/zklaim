@@ -120,7 +120,7 @@ zklaim_ctx* zklaim_context_new();
 /**
  * frees a given zklaim context
  *
- * @param ctx context to free
+ * @param ctx context to free; NULL is allowed
  */
 void zklaim_ctx_free(zklaim_ctx *ctx);
 
@@ -172,7 +172,8 @@ int zklaim_ctx_sign(zklaim_ctx*, gcry_sexp_t);
  * generate a proof for the given context
  *
  * @param ctx the context for which the proof should be generated
- * @result ZKLAIM_OK on success
+ * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if the context is NULL,
+ *         has no payloads, or proof generation fails.
  */
 int zklaim_proof_generate(zklaim_ctx *ctx);
 
@@ -190,7 +191,8 @@ int zklaim_proof_verify(zklaim_ctx *ctx);
  * perform the trusted setup for a given context
  *
  * @param ctx the context for which to generate the keys
- * @result ZKLAIM_OK on success
+ * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if the context is NULL
+ *         or has no payloads.
  */
 int zklaim_trusted_setup(zklaim_ctx *ctx);
 
