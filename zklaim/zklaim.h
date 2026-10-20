@@ -241,9 +241,11 @@ void zklaim_print(zklaim_ctx *ctx);
  *
  * @param pl the payload in which an attribute shall be set
  * @param attr the value of the attribute to set
- * @param pos the positition of the attribute within the payload (0-4)
+ * @param pos the position of the attribute within the payload (0-4)
+ * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if pos is out of range.
+ *         An invalid position leaves the payload unchanged.
  */
-void zklaim_set_attr(zklaim_payload *pl, uint64_t attr, uint8_t pos);
+int zklaim_set_attr(zklaim_payload *pl, uint64_t attr, uint8_t pos);
 
 
 /**

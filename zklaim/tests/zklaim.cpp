@@ -10,6 +10,48 @@ TEST(zklaim, can_create_ctx) {
     ASSERT_TRUE(ctx);
 }
 
+TEST(zklaim, rejects_invalid_attribute_positions) {
+    zklaim_payload pl;
+    memset(&pl, 0xa5, sizeof(pl));
+    unsigned char original[sizeof(pl)];
+    memcpy(original, &pl, sizeof(pl));
+
+    // Position 5 is the salt slot; larger positions must also be rejected.
+    for (uint8_t pos : {ZKLAIM_MAX_PAYLOAD_ATTRIBUTES, 6, 255}) {
+        SCOPED_TRACE(static_cast<unsigned int>(pos));
+        memcpy(&pl, original, sizeof(pl));
+        EXPECT_EQ(ZKLAIM_ERROR,
+                  zklaim_set_attr(&pl, UINT64_C(0x4141414141414141), pos));
+        EXPECT_EQ(0, memcmp(original, &pl, sizeof(pl)));
+    }
+}
+
+TEST(zklaim, can_set_all_attribute_slots) {
+    zklaim_payload pl = {};
+    memset(pl.pre, 0xa5, sizeof(pl.pre));
+    pl.salt = UINT64_C(0x123456789abcdef0);
+    const uint64_t values[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES] = {
+        0, 1, UINT64_C(0x0123456789abcdef),
+        UINT64_C(0x8000000000000000), UINT64_MAX
+    };
+
+    for (uint8_t pos = 0; pos < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++pos) {
+        SCOPED_TRACE(static_cast<unsigned int>(pos));
+        ASSERT_EQ(ZKLAIM_OK, zklaim_set_attr(&pl, values[pos], pos));
+    }
+
+    uint64_t actual[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
+    memcpy(actual, pl.pre, sizeof(actual));
+    for (size_t pos = 0; pos < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++pos) {
+        SCOPED_TRACE(pos);
+        EXPECT_EQ(values[pos], actual[pos]);
+    }
+    uint64_t salt_slot;
+    memcpy(&salt_slot, pl.pre + sizeof(actual), sizeof(salt_slot));
+    EXPECT_EQ(UINT64_C(0xa5a5a5a5a5a5a5a5), salt_slot);
+    EXPECT_EQ(UINT64_C(0x123456789abcdef0), pl.salt);
+}
+
 TEST(zklaim, can_create_and_add_pl) {
     zklaim_payload pl;
     memset(&pl, 0, sizeof(zklaim_payload));
