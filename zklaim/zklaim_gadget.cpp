@@ -15,9 +15,15 @@
  */
 
 
-#include <libsnark/gadgetlib1/gadgets/hashes/sha256/sha256_gadget.hpp>
 #include <libsnark/gadgetlib1/gadgets/basic_gadgets.hpp>
 #include <libff/algebra/fields/field_utils.hpp>
+
+// libsnark's SHA256 DEBUG diagnostics print the private input block. Disable
+// those dumps when including the gadget, preserving DEBUG elsewhere and asserts.
+#pragma push_macro("DEBUG")
+#undef DEBUG
+#include <libsnark/gadgetlib1/gadgets/hashes/sha256/sha256_gadget.hpp>
+#pragma pop_macro("DEBUG")
 
 typedef std::vector<bool> bit_vector;
 
@@ -35,8 +41,6 @@ bool sha256_padding[128] = {1,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0
     0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
     0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,1, 1,0,0,0,0,0,0,0};
 
-bool debug = false;
-
 uint64_t extractFromBV(const libff::bit_vector &r, uint8_t slot_offset) {
     uint64_t var = 0;
 
@@ -49,19 +53,7 @@ uint64_t extractFromBV(const libff::bit_vector &r, uint8_t slot_offset) {
     // recovering age from bitvector
     for (size_t i = 0; i < 8; i++) {
         for (size_t k=0; k < 8; k++) {
-            if (debug)
-                printf("%d ", r[slot_offset*64+i*8+k]);
             var |= (uint64_t) r[slot_offset*64+i*8+k] << (8-1+i*8-k);
-        }
-    }
-    if (debug) {
-        printf("\n");
-
-        for (size_t i = 0; i < 8; i++) {
-            uint8_t tmp = ((uint64_t) var >> i*8) & 0xff;
-            for (size_t k=0; k < 8; k++) {
-                printf("%lu ", (tmp >> k) & (1ul));
-            }
         }
     }
 
@@ -774,7 +766,6 @@ class zklaim_gadget : public gadget<FieldT> {
             unpack_inputs->generate_r1cs_witness_from_bits();
             pack_REF->generate_r1cs_witness_from_bits();
             pack_OPS->generate_r1cs_witness_from_bits();
-            cout << endl << opsvals.get_vals(this->pb) << endl;
 
             for (size_t i=0; i<ctx->num_of_payloads; i++) {
                 data0_cgs[i]->generate_r1cs_witness();
@@ -785,7 +776,6 @@ class zklaim_gadget : public gadget<FieldT> {
             }
 
             pack_PL->generate_r1cs_witness_from_bits();
-            cout << endl << plvars.get_vals(this->pb) << endl;
 
         }
 };

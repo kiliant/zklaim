@@ -192,6 +192,9 @@ int libsnark_import_proof(r1cs_gg_ppzksnark_proof<ppT>* proof, unsigned char *bu
 
 // TODO
 int libsnark_trusted_setup(zklaim_ctx *ctx) {
+    if (ctx == nullptr || ctx->num_of_payloads == 0 || ctx->pl_ctx_head == nullptr) {
+        return ZKLAIM_ERROR;
+    }
 #ifndef DEBUG
     libff::inhibit_profiling_counters = 1;
     libff::inhibit_profiling_info = 1;
@@ -215,6 +218,9 @@ int libsnark_trusted_setup(zklaim_ctx *ctx) {
 
 // TODO
 int libsnark_prove(zklaim_ctx *ctx) {
+    if (ctx == nullptr || ctx->num_of_payloads == 0 || ctx->pl_ctx_head == nullptr) {
+        return ZKLAIM_ERROR;
+    }
 #ifndef DEBUG
     libff::inhibit_profiling_counters = 1;
     libff::inhibit_profiling_info = 1;

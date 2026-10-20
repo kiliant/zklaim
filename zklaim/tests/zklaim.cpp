@@ -13,6 +13,44 @@ TEST(zklaim, can_create_ctx) {
     ASSERT_TRUE(ctx);
 }
 
+TEST(zklaimDeathTest, can_free_null_context) {
+    ASSERT_EXIT({
+        zklaim_ctx_free(NULL);
+        _exit(0);
+    }, ::testing::ExitedWithCode(0), "");
+}
+
+TEST(zklaimDeathTest, frees_context_with_untrusted_payload_count) {
+    ASSERT_EXIT({
+        zklaim_ctx *ctx = zklaim_context_new();
+        if (ctx == NULL) _exit(1);
+        zklaim_payload pl = {};
+        zklaim_add_pl(ctx, pl);
+        zklaim_add_pl(ctx, pl);
+        ctx->num_of_payloads = SIZE_MAX;
+        zklaim_ctx_free(ctx);
+        _exit(0);
+    }, ::testing::ExitedWithCode(0), "");
+}
+
+TEST(zklaim, frees_context_storage_with_zero_metadata) {
+    // Also run under a leak detector to check that every allocation is released.
+    zklaim_ctx *ctx = zklaim_context_new();
+    ASSERT_NE(nullptr, ctx);
+    zklaim_payload pl = {};
+    zklaim_add_pl(ctx, pl);
+    zklaim_add_pl(ctx, pl);
+    ctx->num_of_payloads = 0;
+    // Allocations can be non-null even when their serialized size is zero.
+    ctx->pk = static_cast<unsigned char *>(malloc(1));
+    ctx->vk = static_cast<unsigned char *>(malloc(1));
+    ctx->proof = static_cast<unsigned char *>(malloc(1));
+    ASSERT_NE(nullptr, ctx->pk);
+    ASSERT_NE(nullptr, ctx->vk);
+    ASSERT_NE(nullptr, ctx->proof);
+    zklaim_ctx_free(ctx);
+}
+
 TEST(zklaim, rejects_invalid_attribute_positions) {
     zklaim_payload pl;
     memset(&pl, 0xa5, sizeof(pl));
@@ -459,18 +497,39 @@ TEST(zklaim, can_handle_three_payloads) {
 
 }
 
-TEST(zklaim, can_handle_no_payload) {
-    gcry_sexp_t priv;
+TEST(zklaim, rejects_contexts_without_payloads) {
+    int (*operations[])(zklaim_ctx *) = {
+        zklaim_trusted_setup, libsnark_trusted_setup,
+        zklaim_proof_generate, libsnark_prove
+    };
+    zklaim_wrap_payload_ctx payload = {};
+    unsigned char existing[] = {1, 2, 3};
+    zklaim_ctx ctx = {};
+    ctx.pk = ctx.vk = ctx.proof = existing;
+    ctx.pk_size = ctx.vk_size = ctx.proof_size = sizeof(existing);
 
-    zklaim_gen_pk(&priv);
+    // Neither a count without a list nor a list without a count is provable.
+    for (int state = 0; state < 3; ++state) {
+        SCOPED_TRACE(state);
+        ctx.num_of_payloads = state == 1 ? 1 : 0;
+        ctx.pl_ctx_head = state == 2 ? &payload : nullptr;
+        unsigned char original[sizeof(ctx)];
+        memcpy(original, &ctx, sizeof(ctx));
+        for (auto operation : operations) {
+            EXPECT_EQ(ZKLAIM_ERROR, operation(&ctx));
+            EXPECT_EQ(0, memcmp(original, &ctx, sizeof(ctx)));
+        }
+    }
+}
 
-    zklaim_ctx *ctx = zklaim_context_new();
-
-    zklaim_hash_ctx(ctx);
-
-    ASSERT_FALSE(zklaim_trusted_setup(ctx));
-    ASSERT_FALSE(zklaim_ctx_sign(ctx, priv));
-    ASSERT_FALSE(zklaim_proof_generate(ctx));
+TEST(zklaimDeathTest, setup_and_proving_reject_null_contexts) {
+    ASSERT_EXIT({
+        if (zklaim_trusted_setup(NULL) != ZKLAIM_ERROR ||
+            libsnark_trusted_setup(NULL) != ZKLAIM_ERROR ||
+            zklaim_proof_generate(NULL) != ZKLAIM_ERROR ||
+            libsnark_prove(NULL) != ZKLAIM_ERROR) _exit(1);
+        _exit(0);
+    }, ::testing::ExitedWithCode(0), "");
 }
 
 TEST(DISABLED_zklaim, can_handle_mismatching_payloads) {
@@ -515,11 +574,7 @@ static bool zklaim_test_circuit_accepts(uint64_t ref, enum zklaim_test_forgery f
     zklaim_gadget<FieldT> g(pb, ctx);
     g.generate_r1cs_constraints();
 
-    // generate_r1cs_witness() dumps witness values to cout, keep test output readable
-    std::stringstream sink;
-    std::streambuf *cout_buf = std::cout.rdbuf(sink.rdbuf());
     g.generate_r1cs_witness(ctx);
-    std::cout.rdbuf(cout_buf);
 
     switch (forgery) {
         case forge_value:
@@ -557,6 +612,35 @@ TEST(zklaim, detect_forged_values_in_circuit) {
     EXPECT_FALSE(zklaim_test_circuit_accepts(18, forge_value));
     EXPECT_FALSE(zklaim_test_circuit_accepts(18, forge_reference));
     EXPECT_FALSE(zklaim_test_circuit_accepts(18, forge_operation));
+}
+
+TEST(zklaim, witness_generation_does_not_print_private_values) {
+    typedef libff::Fr<default_r1cs_ppzksnark_pp> FieldT;
+    default_r1cs_ppzksnark_pp::init_public_params();
+    zklaim_payload pl = {};
+    for (uint8_t i = 0; i < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++i) {
+        pl.data_op[i] = zklaim_noop;
+        ASSERT_EQ(ZKLAIM_OK, zklaim_set_attr(&pl, UINT64_C(0x123456789abcdef0) + i, i));
+    }
+    zklaim_ctx *ctx = zklaim_context_new();
+    ASSERT_NE(nullptr, ctx);
+    zklaim_add_pl(ctx, pl);
+    zklaim_hash_ctx(ctx);
+    protoboard<FieldT> pb;
+    zklaim_gadget<FieldT> g(pb, ctx);
+    g.generate_r1cs_constraints();
+
+    // Use the gadget directly, without the wrapper's stdout suppression.
+    ::testing::internal::CaptureStdout();
+    ::testing::internal::CaptureStderr();
+    g.generate_r1cs_witness(ctx);
+    const std::string output = ::testing::internal::GetCapturedStdout();
+    const std::string errors = ::testing::internal::GetCapturedStderr();
+    EXPECT_TRUE(output.empty());
+    EXPECT_TRUE(errors.empty());
+    EXPECT_TRUE(pb.is_satisfied());
+    EXPECT_EQ(ctx->pl_ctx_head->pl.salt, pb.val(g.plvars[5]).as_ulong());
+    zklaim_ctx_free(ctx);
 }
 
 TEST(DISABLED_zklaim, rejects_invalid_proof) {

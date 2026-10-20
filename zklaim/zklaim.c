@@ -37,38 +37,20 @@ zklaim_ctx* zklaim_context_new() {
 }
 
 void zklaim_ctx_free(zklaim_ctx *ctx) {
-    // free all payloads
-    zklaim_wrap_payload_ctx *back[ctx->num_of_payloads];
+    if (ctx == NULL) {
+        return;
+    }
+
     zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
-    for (size_t i=0; i<ctx->num_of_payloads; i++) {
-        back[i] = cur;
-        cur = cur->next;
+    while (cur != NULL) {
+        zklaim_wrap_payload_ctx *next = cur->next;
+        free(cur);
+        cur = next;
     }
 
-    for (int i=ctx->num_of_payloads-1; i>=0; i--) {
-        free(back[i]);
-    }
-
-    // this will free if existing
-
-    // free pk struct if existing
-    if (ctx->pk_size > 0) {
-        // do free
-        free(ctx->pk);
-    }
-
-    // free vk struct if existing
-    if(ctx->vk_size > 0) {
-        // do free
-        free(ctx->vk);
-    }
-
-    // free proof struct if existing
-    if (ctx->proof_size > 0) {
-        // do free
-        free(ctx->proof);
-    }
-
+    free(ctx->pk);
+    free(ctx->vk);
+    free(ctx->proof);
     free(ctx);
 }
 
