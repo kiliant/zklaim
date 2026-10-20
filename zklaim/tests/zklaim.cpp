@@ -1,5 +1,8 @@
 #include <gtest/gtest.h>
 #include <sstream>
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/resource.h>
 #include "../snark.cpp"
 extern "C" {
 #include <zklaim/zklaim.h>
@@ -50,6 +53,42 @@ TEST(zklaim, can_set_all_attribute_slots) {
     memcpy(&salt_slot, pl.pre + sizeof(actual), sizeof(salt_slot));
     EXPECT_EQ(UINT64_C(0xa5a5a5a5a5a5a5a5), salt_slot);
     EXPECT_EQ(UINT64_C(0x123456789abcdef0), pl.salt);
+}
+
+TEST(zklaimDeathTest, hashes_payload_when_file_descriptors_are_exhausted) {
+    ASSERT_EXIT({
+        // Initialize libgcrypt's entropy source before exhausting descriptors.
+        unsigned char seed[8];
+        gcry_randomize(seed, sizeof(seed), GCRY_STRONG_RANDOM);
+        struct rlimit limit;
+        if (getrlimit(RLIMIT_NOFILE, &limit) != 0) _exit(1);
+        limit.rlim_cur = 0;
+        if (setrlimit(RLIMIT_NOFILE, &limit) != 0) _exit(2);
+        if (open("/dev/urandom", O_RDONLY) != -1 || errno != EMFILE) _exit(3);
+
+        zklaim_payload pl = {};
+        pl.salt = UINT64_C(0x123456789abcdef0);
+        zklaim_hash_pl(&pl);
+        if (pl.salt == UINT64_C(0x123456789abcdef0)) _exit(4);
+        if (memcmp(pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t),
+                   &pl.salt, sizeof(pl.salt)) != 0) _exit(5);
+        _exit(0);
+    }, ::testing::ExitedWithCode(0), "");
+}
+
+TEST(zklaim, payload_hash_includes_fresh_salt) {
+    zklaim_payload pl = {};
+    memset(pl.pre, 0xa5, sizeof(pl.pre));
+    zklaim_hash_pl(&pl);
+
+    EXPECT_EQ(0, memcmp(pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t),
+                        &pl.salt, sizeof(pl.salt)));
+    unsigned char expected[32];
+    SHA256(pl.pre, sizeof(pl.pre), expected);
+    EXPECT_EQ(0, memcmp(expected, pl.hash, sizeof(expected)));
+    for (size_t i = 0; i < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t); ++i) {
+        EXPECT_EQ(0xa5, pl.pre[i]);
+    }
 }
 
 TEST(zklaim, can_create_and_add_pl) {
