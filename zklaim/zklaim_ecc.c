@@ -28,73 +28,74 @@ void print_sexp(gcry_sexp_t sexp) {
     free(buf);
 }
 
-int zklaim_sign(unsigned char *buf, size_t len, gcry_sexp_t *sig, gcry_sexp_t priv) {
-    unsigned char *dgst;
-    gcry_sexp_t data;
-    gcry_mpi_t dgst_mpi;
+// Construct signing/verification data while releasing digest temporaries on error.
+static int signature_data(unsigned char *buf, size_t len, gcry_sexp_t *data) {
+    unsigned char *dgst = NULL;
+    gcry_mpi_t dgst_mpi = NULL;
     gcry_error_t err;
+    int res = 1;
+    *data = NULL;
 
-    if (zklaim_calculate_hash(buf, len, &dgst) != 0) {
-        return 1;
+    if ((buf == NULL && len != 0) ||
+        zklaim_calculate_hash(buf, len, &dgst) != 0) {
+        goto cleanup;
     }
-
-    gcry_mpi_scan(&dgst_mpi, GCRYMPI_FMT_USG, dgst, 32, NULL);
-
-    err = gcry_sexp_build(&data, NULL, "(data (flags raw) (value %m))", dgst_mpi);
+    err = gcry_mpi_scan(&dgst_mpi, GCRYMPI_FMT_USG, dgst, 32, NULL);
     if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        free(dgst);
-        gcry_sexp_release(data);
-        return 1;
+        goto error;
     }
-
-    err = gcry_pk_sign(sig, data, priv);
+    err = gcry_sexp_build(data, NULL, "(data (flags raw) (value %m))", dgst_mpi);
     if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        free(dgst);
-        gcry_sexp_release(data);
-        return 1;
+        goto error;
     }
+    res = 0;
+    goto cleanup;
 
+error:
+    fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
+cleanup:
     gcry_mpi_release(dgst_mpi);
-    gcry_sexp_release(data);
     free(dgst);
+    if (res != 0) {
+        gcry_sexp_release(*data);
+        *data = NULL;
+    }
+    return res;
+}
+
+int zklaim_sign(unsigned char *buf, size_t len, gcry_sexp_t *sig, gcry_sexp_t priv) {
+    gcry_sexp_t data = NULL;
+    gcry_error_t err;
+    if (sig == NULL) {
+        return 1;
+    }
+    *sig = NULL;
+    if (priv == NULL || signature_data(buf, len, &data)) {
+        return 1;
+    }
+    err = gcry_pk_sign(sig, data, priv);
+    gcry_sexp_release(data);
+    if (err != GPG_ERR_NO_ERROR) {
+        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
+        gcry_sexp_release(*sig);
+        *sig = NULL;
+        return 1;
+    }
     return 0;
 }
 
 int zklaim_verify(unsigned char *buf, size_t len, gcry_sexp_t sig, gcry_sexp_t pub) {
+    gcry_sexp_t data = NULL;
     gcry_error_t err;
-    unsigned char *dgst;
-    gcry_mpi_t dgst_mpi;
-    gcry_sexp_t data;
-
-    if (zklaim_calculate_hash(buf, len, &dgst) != 0) {
+    if (sig == NULL || pub == NULL || signature_data(buf, len, &data)) {
         return 1;
     }
-
-    gcry_mpi_scan(&dgst_mpi, GCRYMPI_FMT_USG, dgst, 32, NULL);
-
-    err = gcry_sexp_build(&data, NULL, "(data (flags raw) (value %m))", dgst_mpi);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        free(dgst);
-        gcry_sexp_release(data);
-        return 1;
-    }
-
-
     err = gcry_pk_verify(sig, data, pub);
+    gcry_sexp_release(data);
     if (err != GPG_ERR_NO_ERROR) {
         fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        free(dgst);
-        gcry_sexp_release(data);
-        gcry_mpi_release(dgst_mpi);
         return 1;
     }
-
-    gcry_mpi_release(dgst_mpi);
-    gcry_sexp_release(data);
-    free(dgst);
     return 0;
 }
 
@@ -113,100 +114,80 @@ void pad_msb(void *buf, size_t size, size_t target_size)
 
 int zklaim_sig2buf(gcry_sexp_t sig, unsigned char **buf, size_t *len) {
     size_t rsize, ssize;
-
-    gcry_sexp_t r, s;
-    gcry_mpi_t r_mpi, s_mpi;
+    gcry_sexp_t pub = NULL, r = NULL, s = NULL;
+    gcry_mpi_t r_mpi = NULL, s_mpi = NULL;
+    unsigned char *encoded = NULL;
     gcry_error_t err;
-
-    gcry_sexp_t pub = gcry_sexp_find_token(sig, "ecdsa", 0);
-
-    r = gcry_sexp_find_token(pub, "r", 0);
-    r_mpi = gcry_sexp_nth_mpi(r, 1, GCRYMPI_FMT_USG);
-    s = gcry_sexp_find_token(pub, "s", 0);
-    s_mpi = gcry_sexp_nth_mpi(s, 1, GCRYMPI_FMT_USG);
+    int res = 1;
 
     if (buf == NULL) {
-        gcry_sexp_release(r);
-        gcry_sexp_release(s);
-        gcry_sexp_release(pub);
-        gcry_mpi_release(r_mpi);
-        gcry_mpi_release(s_mpi);
-
         return 1;
     }
+    *buf = NULL;
+    if (len) *len = 0;
+    if (sig == NULL) goto cleanup;
+    pub = gcry_sexp_find_token(sig, "ecdsa", 0);
+    if (pub == NULL) goto cleanup;
+    r = gcry_sexp_find_token(pub, "r", 0);
+    s = gcry_sexp_find_token(pub, "s", 0);
+    if (r == NULL || s == NULL) goto cleanup;
+    r_mpi = gcry_sexp_nth_mpi(r, 1, GCRYMPI_FMT_USG);
+    s_mpi = gcry_sexp_nth_mpi(s, 1, GCRYMPI_FMT_USG);
+    if (r_mpi == NULL || s_mpi == NULL) goto cleanup;
 
-    *buf = (unsigned char*) calloc(1, 64);
+    encoded = (unsigned char*) calloc(1, 64);
+    if (encoded == NULL) goto cleanup;
+    err = gcry_mpi_print(GCRYMPI_FMT_USG, encoded, 32, &rsize, r_mpi);
+    if (err != GPG_ERR_NO_ERROR) goto error;
+    err = gcry_mpi_print(GCRYMPI_FMT_USG, encoded + 32, 32, &ssize, s_mpi);
+    if (err != GPG_ERR_NO_ERROR) goto error;
+    pad_msb(encoded, rsize, 32);
+    pad_msb(encoded + 32, ssize, 32);
+    *buf = encoded;
+    encoded = NULL;
+    if (len) *len = 64;
+    res = 0;
+    goto cleanup;
 
-    if (len)
-        *len = 64;
-
-    err = gcry_mpi_print(GCRYMPI_FMT_USG, *buf, 32, &rsize, r_mpi);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        gcry_sexp_release(r);
-        gcry_sexp_release(s);
-        gcry_sexp_release(pub);
-        gcry_mpi_release(r_mpi);
-        gcry_mpi_release(s_mpi);
-
-        return 1;
-    }
-
-    err = gcry_mpi_print(GCRYMPI_FMT_USG, *buf+32, 32, &ssize, s_mpi);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        gcry_sexp_release(r);
-        gcry_sexp_release(s);
-        gcry_sexp_release(pub);
-        gcry_mpi_release(r_mpi);
-        gcry_mpi_release(s_mpi);
-
-        return 1;
-    }
-
-
-    //if (rsize <32 || ssize < 32)
-    //    printf("!!!!!\n");
-
-    pad_msb(*buf, rsize, 32);
-    pad_msb(*buf+32, ssize, 32);
-
-    //printf("serialized %zu and %zu\n", nbytesr, nbytess);
-
+error:
+    fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
+cleanup:
+    free(encoded);
     gcry_sexp_release(r);
     gcry_sexp_release(s);
     gcry_sexp_release(pub);
     gcry_mpi_release(r_mpi);
     gcry_mpi_release(s_mpi);
-    return 0;
+    return res;
 }
 
 int zklaim_buf2sig(unsigned char *buf, size_t len, gcry_sexp_t *sig) {
-    gcry_mpi_t r, s;
+    gcry_mpi_t r = NULL, s = NULL;
     gcry_error_t err;
-    size_t readb;
+    int res = 1;
+    if (sig == NULL) return 1;
+    *sig = NULL;
+    if (buf == NULL || len != 64) return 1;
 
-    err = gcry_mpi_scan(&r, GCRYMPI_FMT_USG, buf, 32, &readb);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        return 1;
-    }
-
-    err = gcry_mpi_scan(&s, GCRYMPI_FMT_USG, buf+32, 32, &readb);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        return 1;
-    }
-
+    err = gcry_mpi_scan(&r, GCRYMPI_FMT_USG, buf, 32, NULL);
+    if (err != GPG_ERR_NO_ERROR) goto error;
+    err = gcry_mpi_scan(&s, GCRYMPI_FMT_USG, buf + 32, 32, NULL);
+    if (err != GPG_ERR_NO_ERROR) goto error;
     err = gcry_sexp_build(sig, NULL, "(sig-val (ecdsa (r %M) (s %M)))", r, s);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        return 1;
-    }
+    if (err != GPG_ERR_NO_ERROR) goto error;
+    res = 0;
+    goto cleanup;
 
+error:
+    fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
+cleanup:
     gcry_mpi_release(r);
     gcry_mpi_release(s);
-    return 0;
+    if (res != 0) {
+        gcry_sexp_release(*sig);
+        *sig = NULL;
+    }
+    return res;
 }
 
 int zklaim_gen_pk(gcry_sexp_t *priv) {

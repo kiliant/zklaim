@@ -137,6 +137,44 @@ TEST(zklaim, can_do_ts) {
     ASSERT_FALSE(zklaim_trusted_setup(ctx));
 }
 
+static int context_sign_failure_result(gcry_sexp_t key) {
+    zklaim_ctx ctx = {};
+    unsigned char verification_key[] = {1, 2, 3, 4};
+    ctx.vk = verification_key;
+    ctx.vk_size = sizeof(verification_key);
+    memset(ctx.signature, 0xa5, sizeof(ctx.signature));
+    unsigned char original[sizeof(ctx.signature)];
+    memcpy(original, ctx.signature, sizeof(original));
+    if (zklaim_ctx_sign(&ctx, key) != ZKLAIM_ERROR) return 1;
+    if (memcmp(original, ctx.signature, sizeof(original)) != 0) return 2;
+    return 0;
+}
+
+TEST(zklaimDeathTest, signing_rejects_public_only_key) {
+    ASSERT_EXIT({
+        gcry_sexp_t priv;
+        gcry_sexp_t pub;
+        if (zklaim_gen_pk(&priv) || zklaim_get_pub(priv, &pub)) _exit(3);
+        int result = context_sign_failure_result(pub);
+        gcry_sexp_release(pub);
+        gcry_sexp_release(priv);
+        _exit(result);
+    }, ::testing::ExitedWithCode(0), "");
+}
+
+TEST(zklaimDeathTest, signing_rejects_non_ecdsa_signature) {
+    ASSERT_EXIT({
+        gcry_sexp_t params;
+        gcry_sexp_t priv;
+        if (gcry_sexp_build(&params, NULL, "(genkey(rsa(nbits 4:2048)))")) _exit(3);
+        if (gcry_pk_genkey(&priv, params)) _exit(4);
+        int result = context_sign_failure_result(priv);
+        gcry_sexp_release(priv);
+        gcry_sexp_release(params);
+        _exit(result);
+    }, ::testing::ExitedWithCode(0), "");
+}
+
 TEST(zklaim, can_sign) {
     zklaim_payload pl;
     gcry_sexp_t priv;
