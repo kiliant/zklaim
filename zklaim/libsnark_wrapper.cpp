@@ -198,10 +198,6 @@ int libsnark_trusted_setup(zklaim_ctx *ctx) {
 #ifndef DEBUG
     libff::inhibit_profiling_counters = 1;
     libff::inhibit_profiling_info = 1;
-    int stdout_copy;
-    stdout_copy = dup(STDOUT_FILENO);
-    fflush(stdout);
-    close(STDOUT_FILENO);
 #endif
     ppT::init_public_params();
     auto keypair = generate_keypair<ppT>(ctx);
@@ -209,10 +205,6 @@ int libsnark_trusted_setup(zklaim_ctx *ctx) {
     ctx->vk_size = libsnark_export_vk(keypair.vk, &ctx->vk);
     ctx->pk_size = libsnark_export_pk(keypair.pk, &ctx->pk);
 
-#ifndef DEBUG
-    fflush(stdout);
-    dup2(stdout_copy, STDOUT_FILENO);
-#endif
     return 0;
 }
 
@@ -224,10 +216,6 @@ int libsnark_prove(zklaim_ctx *ctx) {
 #ifndef DEBUG
     libff::inhibit_profiling_counters = 1;
     libff::inhibit_profiling_info = 1;
-    int stdout_copy;
-    stdout_copy = dup(STDOUT_FILENO);
-    fflush(stdout);
-    close(STDOUT_FILENO);
 #endif
     ppT::init_public_params();
     r1cs_gg_ppzksnark_proving_key<ppT> pk;
@@ -236,30 +224,19 @@ int libsnark_prove(zklaim_ctx *ctx) {
 
     r1cs_gg_ppzksnark_proof<ppT> libsnark_proof;
     if (!generate_proof<ppT>(pk, ctx, libsnark_proof)) {
-#ifndef DEBUG
-        fflush(stdout);
-        dup2(stdout_copy, STDOUT_FILENO);
-#endif
-
         return 1;
     }
 
     ctx->proof_size = libsnark_export_proof(libsnark_proof, &ctx->proof);
 
-#ifndef DEBUG
-    fflush(stdout);
-    dup2(stdout_copy, STDOUT_FILENO);
-#endif
     return 0;
 }
 
 // TODO
 int libsnark_verify(zklaim_ctx *ctx) {
 #ifndef DEBUG
-    int stdout_copy;
-    stdout_copy = dup(STDOUT_FILENO);
-    fflush(stdout);
-    close(STDOUT_FILENO);
+    libff::inhibit_profiling_counters = 1;
+    libff::inhibit_profiling_info = 1;
 #endif
     ppT::init_public_params();
     int res;
@@ -272,11 +249,6 @@ int libsnark_verify(zklaim_ctx *ctx) {
     libsnark_import_proof(&libsnark_proof, ctx->proof, ctx->proof_size);
 
     res = !verify_proof<ppT>(vk, libsnark_proof, ctx);
-#ifndef DEBUG
-    fflush(stdout);
-    dup2(stdout_copy, STDOUT_FILENO);
-#endif
-
     return res;
 }
 
