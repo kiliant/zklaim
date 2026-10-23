@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <sstream>
 #include <cerrno>
+#include <memory>
 #include <fcntl.h>
 #include <sys/resource.h>
 #include "../snark.cpp"
@@ -11,6 +12,49 @@ extern "C" {
 TEST(zklaim, can_create_ctx) {
     zklaim_ctx *ctx = zklaim_context_new();
     ASSERT_TRUE(ctx);
+}
+
+TEST(zklaim, snark_calls_preserve_stdout_and_file_descriptors) {
+    std::unique_ptr<zklaim_ctx, decltype(&zklaim_ctx_free)> ctx(
+        zklaim_context_new(), zklaim_ctx_free);
+    ASSERT_NE(nullptr, ctx);
+    zklaim_payload pl = {};
+    for (auto &op : pl.data_op) op = zklaim_noop;
+    pl.data_op[0] = zklaim_eq;
+    pl.data_ref[0] = 42;
+    ASSERT_EQ(ZKLAIM_OK, zklaim_set_attr(&pl, 42, 0));
+    zklaim_add_pl(ctx.get(), pl);
+    zklaim_hash_ctx(ctx.get());
+
+    // dup returns the lowest free descriptor, so a leaked descriptor changes it.
+    const int next_fd = dup(STDOUT_FILENO);
+    ASSERT_GE(next_fd, 0);
+    close(next_fd);
+    clearerr(stdout);
+    auto expect_stdout_intact = [&]() {
+        EXPECT_EQ(0, ferror(stdout));
+        const int fd = dup(STDOUT_FILENO);
+        EXPECT_EQ(next_fd, fd);
+        if (fd >= 0) close(fd);
+    };
+
+    EXPECT_EQ(ZKLAIM_OK, zklaim_trusted_setup(ctx.get()));
+    expect_stdout_intact();
+    EXPECT_EQ(ZKLAIM_OK, zklaim_proof_generate(ctx.get()));
+    expect_stdout_intact();
+    for (int i = 0; i < 5; ++i) {
+        EXPECT_EQ(ZKLAIM_OK, zklaim_proof_verify(ctx.get()));
+        expect_stdout_intact();
+    }
+    ctx->pl_ctx_head->pl.data_ref[0] = 43;
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_proof_generate(ctx.get()));
+    expect_stdout_intact();
+
+    ::testing::internal::CaptureStdout();
+    EXPECT_GT(printf("caller stdout still works\n"), 0);
+    EXPECT_EQ(0, fflush(stdout));
+    const std::string output = ::testing::internal::GetCapturedStdout();
+    EXPECT_NE(std::string::npos, output.find("caller stdout still works"));
 }
 
 TEST(zklaimDeathTest, can_free_null_context) {
@@ -630,7 +674,7 @@ TEST(zklaim, witness_generation_does_not_print_private_values) {
     zklaim_gadget<FieldT> g(pb, ctx);
     g.generate_r1cs_constraints();
 
-    // Use the gadget directly, without the wrapper's stdout suppression.
+    // Use the gadget directly to exercise its witness diagnostics.
     ::testing::internal::CaptureStdout();
     ::testing::internal::CaptureStderr();
     g.generate_r1cs_witness(ctx);
