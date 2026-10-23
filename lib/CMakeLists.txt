@@ -17,6 +17,9 @@ set(BINARY_OUTPUT OFF CACHE BOOL "Protocol uses portable decimal fields" FORCE)
 set(MONTGOMERY_OUTPUT OFF CACHE BOOL "Protocol uses standard field values" FORCE)
 set(USE_PT_COMPRESSION OFF CACHE BOOL "Protocol uses uncompressed points" FORCE)
 add_subdirectory(${LIBFF_DIR} libff EXCLUDE_FROM_ALL)
+# libff is linked statically into libzklaim; keep its symbols out of the
+# shared library's interface.
+set_target_properties(ff PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 
 if(${CURVE} STREQUAL "BN128")
   # libff's BN128 implementation is based on ate-pairing (x86-64 only)
@@ -27,6 +30,8 @@ if(${CURVE} STREQUAL "BN128")
     ${LIBFF_DIR}/depends/ate-pairing/src/zm.cpp
     ${LIBFF_DIR}/depends/ate-pairing/src/zm2.cpp
   )
+
+  set_target_properties(zm PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
 
   target_include_directories(
     zm

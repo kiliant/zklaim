@@ -19,6 +19,16 @@ add_library(
 
 target_link_libraries(zklaim snark PkgConfig::GCRYPT OpenSSL::Crypto)
 set_target_properties(zklaim PROPERTIES LINKER_LANGUAGE C)
+# Export only the functions marked ZKLAIM_API, not internal helpers or the
+# libsnark templates compiled into the library.
+set_target_properties(
+    zklaim
+
+    PROPERTIES
+    C_VISIBILITY_PRESET hidden
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+)
 
 #add_executable(
 #  main

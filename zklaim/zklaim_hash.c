@@ -14,10 +14,6 @@
  * along with zklaim. If not, see https://www.gnu.org/licenses/.
  */
 
-
-#ifndef ZKLAIM_HASH_C
-#define ZKLAIM_HASH_C
-
 #include <zklaim/zklaim_hash.h>
 #include <zklaim/zklaim.h>
 
@@ -56,6 +52,3 @@ int zklaim_calculate_hash(unsigned char *buf, size_t len, unsigned char **dgst) 
 
     return ZKLAIM_OK;
 }
-
-
-#endif // ZKLAIM_HASH_C

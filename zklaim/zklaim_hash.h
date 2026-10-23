@@ -22,6 +22,7 @@
 #include <gcrypt.h>
 #include <stdlib.h>
 #include <unistd.h>
+#include <zklaim/zklaim_export.h>
 
 
 /**
@@ -30,7 +31,7 @@
  * @param buf the buffer to print
  * @param len length of the buffer in bytes
  */
-void zklaim_print_hex(unsigned char *buf, size_t len);
+ZKLAIM_API void zklaim_print_hex(unsigned char *buf, size_t len);
 
 
 /**
@@ -40,6 +41,6 @@ void zklaim_print_hex(unsigned char *buf, size_t len);
  * @param len the length of the buffer
  * @param dgst the digest will be stored in a buffer of appropriate size (32 byte in case of SHA256)
  */
-int zklaim_calculate_hash(unsigned char *buf, size_t len, unsigned char **dgst);
+ZKLAIM_API int zklaim_calculate_hash(unsigned char *buf, size_t len, unsigned char **dgst);
 
 #endif // ZKLAIM_HASH_H

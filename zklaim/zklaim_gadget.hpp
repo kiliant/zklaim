@@ -14,6 +14,8 @@
  * along with zklaim. If not, see https://www.gnu.org/licenses/.
  */
 
+#ifndef ZKLAIM_GADGET_HPP
+#define ZKLAIM_GADGET_HPP
 
 #include <libsnark/gadgetlib1/gadgets/basic_gadgets.hpp>
 #include <libff/algebra/fields/field_utils.hpp>
@@ -27,7 +29,19 @@
 
 typedef std::vector<bool> bit_vector;
 
-bit_vector memtobv(const unsigned char*, size_t);
+/**
+ * convert the first len bits of a byte buffer to a bit vector, most significant bit first
+ */
+inline bit_vector memtobv(const unsigned char* mem, size_t len) {
+    bit_vector res(len);
+    size_t wordsize = 8;
+    for (size_t i = 0; i < len/wordsize; i++) {
+        for (size_t k=0; k<wordsize; k++) {
+            res[i*wordsize+k] = (*(mem+i) & (1ul << (8-1-k)));
+        }
+    }
+    return res;
+}
 
 extern "C" {
 #include <zklaim/zklaim.h>
@@ -42,26 +56,7 @@ const size_t zklaim_nonce_bits = ZKLAIM_NONCE_SIZE * 8;
  * must fill exactly one block, as a single compression function gadget is used */
 static_assert(zklaim_pre_bits + 1 + 64 <= 512, "pre-image must fit one SHA-256 block");
 
-uint64_t extractFromBV(const libff::bit_vector &r, uint8_t slot_offset) {
-    uint64_t var = 0;
-
-    if (slot_offset > 5) {
-        printf("current construction only allows 3 elements in a zklaim payload!\n");
-        printf("returning -1 dummy value\n");
-        return -1;
-    }
-
-    // recovering age from bitvector
-    for (size_t i = 0; i < 8; i++) {
-        for (size_t k=0; k < 8; k++) {
-            var |= (uint64_t) r[slot_offset*64+i*8+k] << (63 - i*8 - k);
-        }
-    }
-
-    return var;
-}
-
-void set_zklaim_ops(unsigned char *buf, enum zklaim_op op) {
+inline void set_zklaim_ops(unsigned char *buf, enum zklaim_op op) {
     uint8_t val = 0x1;
     switch (op) {
         case zklaim_less:
@@ -783,4 +778,4 @@ class zklaim_gadget : public gadget<FieldT> {
         }
 };
 
-
+#endif // ZKLAIM_GADGET_HPP

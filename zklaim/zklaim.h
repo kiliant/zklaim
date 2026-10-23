@@ -28,6 +28,7 @@
 #define ZKLAIM_H
 
 #include <zklaim/zklaim_ecc.h>
+#include <zklaim/zklaim_export.h>
 #include <stdint.h>
 #include <stdlib.h>
 
@@ -106,7 +107,7 @@ typedef struct zklaim_ctx {
  *
  * @return newly created zklaim context datastructure
  */
-zklaim_ctx* zklaim_context_new();
+ZKLAIM_API zklaim_ctx* zklaim_context_new();
 
 
 /**
@@ -114,7 +115,7 @@ zklaim_ctx* zklaim_context_new();
  *
  * @param ctx context to free; NULL is allowed
  */
-void zklaim_ctx_free(zklaim_ctx *ctx);
+ZKLAIM_API void zklaim_ctx_free(zklaim_ctx *ctx);
 
 
 /**
@@ -129,14 +130,14 @@ void zklaim_ctx_free(zklaim_ctx *ctx);
  * @return size of the created buffer in bytes, or zero on invalid input or
  *         allocation failure; *buf is NULL on failure
  */
-size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf);
+ZKLAIM_API size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf);
 
 /**
  * Serialize a credential WITH its private witnesses for issuer-to-prover
  * transfer over a confidential channel. Never use this for presentations.
  * The allocation and return conventions match zklaim_ctx_serialize.
  */
-size_t zklaim_ctx_serialize_credential(zklaim_ctx *ctx, unsigned char **buf);
+ZKLAIM_API size_t zklaim_ctx_serialize_credential(zklaim_ctx *ctx, unsigned char **buf);
 
 
 /**
@@ -150,7 +151,7 @@ size_t zklaim_ctx_serialize_credential(zklaim_ctx *ctx, unsigned char **buf);
  *         On failure, the destination context is unchanged. Proof contents
  *         are parsed when verifying.
  */
-int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len);
+ZKLAIM_API int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len);
 
 
 /**
@@ -180,7 +181,7 @@ int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len);
  * Do not obtain any trust argument from the untrusted context. The context is
  * unchanged.
  */
-int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_issuer_key[32],
+ZKLAIM_API int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_issuer_key[32],
                       const unsigned char *trusted_vk, size_t trusted_vk_size,
                       const zklaim_predicate *expected, size_t expected_count,
                       const unsigned char nonce[ZKLAIM_NONCE_SIZE]);
@@ -195,7 +196,7 @@ int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_issuer_key[32
  * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if signing or serialization fails.
  *         On failure, the existing context signature is unchanged.
  */
-int zklaim_ctx_sign(zklaim_ctx*, gcry_sexp_t);
+ZKLAIM_API int zklaim_ctx_sign(zklaim_ctx*, gcry_sexp_t);
 
 
 /**
@@ -209,7 +210,7 @@ int zklaim_ctx_sign(zklaim_ctx*, gcry_sexp_t);
  *         context has no payloads, the proving key belongs to another circuit,
  *         or proof generation fails. On failure, the context is unchanged.
  */
-int zklaim_proof_generate(zklaim_ctx *ctx, const unsigned char *pk, size_t pk_size,
+ZKLAIM_API int zklaim_proof_generate(zklaim_ctx *ctx, const unsigned char *pk, size_t pk_size,
                           const unsigned char nonce[ZKLAIM_NONCE_SIZE]);
 
 
@@ -226,7 +227,7 @@ int zklaim_proof_generate(zklaim_ctx *ctx, const unsigned char *pk, size_t pk_si
  * @param nonce the challenge the proof must be bound to
  * @result ZKLAIM_OK on success
  */
-int zklaim_proof_verify(zklaim_ctx *ctx, const unsigned char *vk, size_t vk_size,
+ZKLAIM_API int zklaim_proof_verify(zklaim_ctx *ctx, const unsigned char *vk, size_t vk_size,
                         const unsigned char nonce[ZKLAIM_NONCE_SIZE]);
 
 
@@ -247,7 +248,7 @@ int zklaim_proof_verify(zklaim_ctx *ctx, const unsigned char *vk, size_t vk_size
  * @return ZKLAIM_OK on success, or ZKLAIM_ERROR for invalid arguments or if
  *         setup fails. On failure, *pk and *vk are NULL and both sizes are zero.
  */
-int zklaim_trusted_setup(size_t num_of_payloads, unsigned char **pk, size_t *pk_size,
+ZKLAIM_API int zklaim_trusted_setup(size_t num_of_payloads, unsigned char **pk, size_t *pk_size,
                          unsigned char **vk, size_t *vk_size);
 
 
@@ -258,7 +259,7 @@ int zklaim_trusted_setup(size_t num_of_payloads, unsigned char **pk, size_t *pk_
  * @param pl the payload to add
  * @return ZKLAIM_OK on success
  */
-void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl);
+ZKLAIM_API void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl);
 
 
 /**
@@ -266,7 +267,7 @@ void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl);
  *
  * @param pl the payload to hash
  */
-void zklaim_hash_pl(zklaim_payload *pl);
+ZKLAIM_API void zklaim_hash_pl(zklaim_payload *pl);
 
 
 /**
@@ -276,7 +277,7 @@ void zklaim_hash_pl(zklaim_payload *pl);
  *
  * @param ctx the context to hash
  */
-void zklaim_hash_ctx(zklaim_ctx *ctx);
+ZKLAIM_API void zklaim_hash_ctx(zklaim_ctx *ctx);
 
 
 /**
@@ -284,7 +285,7 @@ void zklaim_hash_ctx(zklaim_ctx *ctx);
  *
  * @param ctx the context to print
  */
-void zklaim_print(zklaim_ctx *ctx);
+ZKLAIM_API void zklaim_print(zklaim_ctx *ctx);
 
 
 /**
@@ -302,10 +303,10 @@ void zklaim_print(zklaim_ctx *ctx);
  * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if pos is out of range.
  *         An invalid position leaves the payload unchanged.
  */
-int zklaim_set_attr(zklaim_payload *pl, uint64_t attr, uint8_t pos);
+ZKLAIM_API int zklaim_set_attr(zklaim_payload *pl, uint64_t attr, uint8_t pos);
 
 /** Read an attribute from the canonical big-endian pre-image. */
-int zklaim_get_attr(const zklaim_payload *pl, uint8_t pos, uint64_t *attr);
+ZKLAIM_API int zklaim_get_attr(const zklaim_payload *pl, uint8_t pos, uint64_t *attr);
 
 
 /**
@@ -313,6 +314,6 @@ int zklaim_get_attr(const zklaim_payload *pl, uint8_t pos, uint64_t *attr);
  *
  * @param ctx the context to clear
  */
-void zklaim_clear_pres(zklaim_ctx *ctx);
+ZKLAIM_API void zklaim_clear_pres(zklaim_ctx *ctx);
 
 #endif // ZKLAIM_H

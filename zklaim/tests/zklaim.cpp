@@ -6,7 +6,7 @@
 #include <fcntl.h>
 #include <openssl/sha.h>
 #include <sys/resource.h>
-#include "../snark.cpp"
+#include "../snark.hpp"
 extern "C" {
 #include <zklaim/zklaim.h>
 }

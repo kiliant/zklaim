@@ -17,8 +17,6 @@
 /**
  * zklaim implementation
  */
-#ifndef ZKLAIM_C
-#define ZKLAIM_C
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -509,5 +507,3 @@ size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf) {
 size_t zklaim_ctx_serialize_credential(zklaim_ctx *ctx, unsigned char **buf) {
     return serialize_context(ctx, buf, 1);
 }
-
-#endif

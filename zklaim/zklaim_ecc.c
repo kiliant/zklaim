@@ -14,9 +14,6 @@
  * along with zklaim. If not, see https://www.gnu.org/licenses/.
  */
 
-#ifndef ZKLAIM_ECC_C
-#define ZKLAIM_ECC_C
-
 #include <zklaim/zklaim_ecc.h>
 #include <limits.h>
 #include <string.h>
@@ -277,5 +274,3 @@ int zklaim_buf2pk(unsigned char *buf, size_t len, gcry_sexp_t *priv) {
     }
     return 0;
 }
-
-#endif // ZKLAIM_ECC_C
