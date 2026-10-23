@@ -3,6 +3,8 @@
 // include testfiles
 #include "zklaim_ecc.cpp"
 #include "zklaim.cpp"
+#include "zklaim_deserialize.cpp"
+#include "zklaim_snark_parsing.cpp"
 #include <gcrypt.h>
 
 int main(int argc, char **argv) {
