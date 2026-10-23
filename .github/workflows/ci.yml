@@ -77,7 +77,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [linux/386, linux/s390x]
+        include:
+          - platform: linux/386
+            image: debian:bookworm-slim
+          - platform: linux/s390x
+            image: ubuntu:24.04
     steps:
       - uses: actions/checkout@v5
         with:
@@ -93,7 +97,7 @@ jobs:
       - name: Verify Linux and macOS presentations on 32-bit or big-endian Linux
         run: |
           docker run --rm --platform '${{ matrix.platform }}' \
-            -v "$PWD:/src" -w /src debian:bookworm-slim sh -ec '
+            -v "$PWD:/src" -w /src '${{ matrix.image }}' sh -ec '
               apt-get update
               apt-get install -y --no-install-recommends build-essential cmake pkg-config libgmp-dev libgcrypt20-dev libssl-dev
               cmake -S . -B build-portable -DCMAKE_BUILD_TYPE=Release -DUSE_ASM=OFF
