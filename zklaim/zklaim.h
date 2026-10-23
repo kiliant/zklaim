@@ -30,10 +30,6 @@
 #include <zklaim/zklaim_ecc.h>
 #include <stdint.h>
 #include <stdlib.h>
-#include <openssl/ec.h>
-#include <openssl/ecdsa.h>
-#include <openssl/evp.h>
-#include <openssl/pem.h>
 
 #define ZKLAIM_OK 0
 #define ZKLAIM_ERROR 1
@@ -62,10 +58,7 @@ enum zklaim_op {
 // fd
 typedef struct zklaim_wrap_payload_ctx zklaim_wrap_payload_ctx;
 typedef struct zklaim_ctx zklaim_ctx;
-typedef struct zklaim_proving_key zklaim_proving_key;
-typedef struct zklaim_verification_key zklaim_verification_key;
 typedef struct zklaim_payload zklaim_payload;
-typedef struct zklaim_proof zklaim_proof;
 
 struct zklaim_payload {
     uint64_t data_ref[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
@@ -321,14 +314,5 @@ int zklaim_get_attr(const zklaim_payload *pl, uint8_t pos, uint64_t *attr);
  * @param ctx the context to clear
  */
 void zklaim_clear_pres(zklaim_ctx *ctx);
-
-// forward declarations of C++ wrappers imported via linkage
-int libsnark_trusted_setup(size_t, unsigned char**, size_t*, unsigned char**, size_t*);
-int libsnark_prove(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
-int libsnark_verify(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
-int libsnark_import_proof(zklaim_proof**, unsigned char*, size_t);
-size_t libsnark_export_proof(zklaim_proof*, unsigned char**);
-void libsnark_free(zklaim_proving_key*, zklaim_verification_key*, zklaim_proof*);
-int zklaim_test();
 
 #endif // ZKLAIM_H

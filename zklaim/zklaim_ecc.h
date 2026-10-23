@@ -26,14 +26,6 @@
 
 
 /**
- * prints a given s-expression
- *
- * @param sexp the expression to pring
- */
-void print_sexp(gcry_sexp_t sexp);
-
-
-/**
  * sign the exact message bytes using RFC 8032 Ed25519 (no external prehash)
  *
  * @param buf the buffer to sign
@@ -55,16 +47,6 @@ int zklaim_sign(unsigned char *buf, size_t len, gcry_sexp_t *sig, gcry_sexp_t pr
  * @return ZKLAIM_OK on success
  */
 int zklaim_verify(unsigned char *buf, size_t len, gcry_sexp_t sig, gcry_sexp_t pub);
-
-
-/**
- * needed to pad msb to target length
- *
- * @param buf the buffer
- * @param size the current size
- * @param target_size the desired size to pad to
- */
-void pad_msb(void *buf, size_t size, size_t target_size);
 
 
 /**

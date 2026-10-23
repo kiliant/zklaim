@@ -70,8 +70,6 @@ int worker() {
          {zklaim_greater_or_eq, zklaim_noop, zklaim_noop, zklaim_noop, zklaim_noop}}
     };
 
-    //print_sexp(pub);
-
     /*
      * - 2 -
      * setup the first payload

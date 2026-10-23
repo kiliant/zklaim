@@ -4,6 +4,7 @@
 #include <map>
 #include <memory>
 #include <fcntl.h>
+#include <openssl/sha.h>
 #include <sys/resource.h>
 #include "../snark.cpp"
 extern "C" {
@@ -613,7 +614,7 @@ TEST(zklaim, can_handle_three_payloads) {
 
 TEST(zklaim, rejects_contexts_without_payloads) {
     int (*operations[])(zklaim_ctx *, const unsigned char *, size_t, const unsigned char *) = {
-        zklaim_proof_generate, libsnark_prove, zklaim_proof_verify, libsnark_verify
+        zklaim_proof_generate, zklaim_proof_verify
     };
     const auto &keys = zklaim_keys_for(1);
     zklaim_wrap_payload_ctx payload = {};
@@ -632,9 +633,9 @@ TEST(zklaim, rejects_contexts_without_payloads) {
         payload.next = state == 3 ? &second : nullptr;
         unsigned char original[sizeof(ctx)];
         memcpy(original, &ctx, sizeof(ctx));
-        for (size_t i = 0; i < 4; ++i) {
-            const unsigned char *key = i < 2 ? keys.pk : keys.vk;
-            const size_t key_size = i < 2 ? keys.pk_size : keys.vk_size;
+        for (size_t i = 0; i < 2; ++i) {
+            const unsigned char *key = i == 0 ? keys.pk : keys.vk;
+            const size_t key_size = i == 0 ? keys.pk_size : keys.vk_size;
             EXPECT_EQ(ZKLAIM_ERROR, operations[i](&ctx, key, key_size, zklaim_test_nonce));
             EXPECT_EQ(0, memcmp(original, &ctx, sizeof(ctx)));
         }
@@ -662,19 +663,16 @@ static int null_argument_result() {
     ctx.pl_ctx_head = &payload;
     ctx.num_of_payloads = 1;
     unsigned char key = 0;
-    unsigned char *pk = nullptr;
-    unsigned char *vk = nullptr;
-    size_t pk_size = 0;
-    size_t vk_size = 0;
     if (zklaim_trusted_setup(1, NULL, NULL, NULL, NULL) != ZKLAIM_ERROR ||
-        libsnark_trusted_setup(0, &pk, &pk_size, &vk, &vk_size) != ZKLAIM_ERROR ||
         zklaim_proof_generate(NULL, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
         zklaim_proof_generate(&ctx, NULL, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
         zklaim_proof_generate(&ctx, &key, 1, NULL) != ZKLAIM_ERROR ||
-        libsnark_prove(NULL, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
-        zklaim_proof_verify(&ctx, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
-        libsnark_verify(&ctx, NULL, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
-        libsnark_verify(&ctx, &key, 1, NULL) != ZKLAIM_ERROR) return 1;
+        zklaim_proof_verify(NULL, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
+        zklaim_proof_verify(&ctx, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR) return 1;
+    ctx.proof = &key;
+    ctx.proof_size = 1;
+    if (zklaim_proof_verify(&ctx, NULL, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
+        zklaim_proof_verify(&ctx, &key, 1, NULL) != ZKLAIM_ERROR) return 2;
     return 0;
 }
 

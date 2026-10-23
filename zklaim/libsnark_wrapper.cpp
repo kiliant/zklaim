@@ -51,9 +51,6 @@ extern "C" {
     int libsnark_trusted_setup(size_t, unsigned char**, size_t*, unsigned char**, size_t*);
     int libsnark_prove(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
     int libsnark_verify(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
-    int libsnark_import_proof(zklaim_proof**, unsigned char*, size_t);
-    void libsnark_free(zklaim_proving_key*, zklaim_verification_key*, zklaim_proof*);
-    size_t libsnark_export_proof(zklaim_proof*, unsigned char**);
 }
 
 typedef std::vector<bool> bit_vector;
@@ -71,17 +68,6 @@ bit_vector memtobv(const unsigned char* mem, size_t len) {
     for (size_t i = 0; i < len/wordsize; i++) {
         for (size_t k=0; k<wordsize; k++) {
             res[i*wordsize+k] = (*(mem+i) & (1ul << (8-1-k)));
-        }
-    }
-    return res;
-}
-
-bit_vector memtobv2(unsigned char* mem, size_t len) {
-    bit_vector res(len);
-    size_t wordsize = 8;
-    for (size_t i = 0; i < len/wordsize; i++) {
-        for (size_t k=0; k<wordsize; k++) {
-            res[i*wordsize+k] = (*(mem+i) & (1ul << (k)));
         }
     }
     return res;
@@ -159,32 +145,6 @@ class bounded_num_get : public std::num_get<char> {
 public:
     explicit bounded_num_get(size_t bytes) : limit(bytes) {}
 };
-
-struct zklaim_proving_key {
-    r1cs_gg_ppzksnark_proving_key<ppT> pk;
-};
-
-struct zklaim_verification_key {
-    r1cs_gg_ppzksnark_verification_key<ppT> vk;
-};
-
-struct zklaim_proof {
-    r1cs_gg_ppzksnark_proof<ppT> proof;
-};
-
-void libsnark_free(zklaim_proving_key* pk, zklaim_verification_key* vk, zklaim_proof* proof) {
-    if (pk) {
-        free(pk);
-    }
-
-    if (vk) {
-        free(vk);
-    }
-
-    if (proof) {
-        free(proof);
-    }
-}
 
 template<typename T>
 size_t libsnark_export(const T &value, unsigned char **buf) {

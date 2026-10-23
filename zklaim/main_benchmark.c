@@ -26,9 +26,10 @@
 #include <stdio.h>
 #include <string.h>
 #include <gcrypt.h>
-#include <semaphore.h>
+#include <pthread.h>
+#include <time.h>
 
-static sem_t file_sem;
+static pthread_mutex_t file_lock = PTHREAD_MUTEX_INITIALIZER;
 
 // to boost up valgrind
 int worker(int k) {
@@ -56,8 +57,6 @@ int worker(int k) {
     unsigned char trusted_issuer_key[32];
     memcpy(trusted_issuer_key, pubbuf, sizeof(trusted_issuer_key));
     free(pubbuf);
-
-    //print_sexp(pub);
 
     /*
      * - 2 -
@@ -169,7 +168,7 @@ int worker(int k) {
 
     verifier_elapsed = (t2.tv_sec-t.tv_sec)*1000 + (t2.tv_nsec-t.tv_nsec)/1000/1000;
 
-    printf("# of payloads: %d\n", ctx->num_of_payloads);
+    printf("# of payloads: %zu\n", ctx->num_of_payloads);
     printf("issuer: %zums\n", issuer_elapsed);
     printf("prover: %zums\n", prover_elapsed);
     printf("verifier: %zums\n", verifier_elapsed);
@@ -178,13 +177,13 @@ int worker(int k) {
     printf("pk: %zuB\n", pk_size);
 
     FILE *f;
-    sem_wait(&file_sem);
+    pthread_mutex_lock(&file_lock);
     char buf[32];
     snprintf(buf, sizeof(buf), "results-%i.csv", getpid());
     f = fopen(buf, "a");
-    fprintf(f, "%lu,%d,%zu,%zu,%zu,%zu,%zu,%zu\n", (unsigned long)time(NULL), ctx->num_of_payloads, issuer_elapsed, prover_elapsed, verifier_elapsed, pk_size, vk_size, ctx->proof_size);
+    fprintf(f, "%lu,%zu,%zu,%zu,%zu,%zu,%zu,%zu\n", (unsigned long)time(NULL), ctx->num_of_payloads, issuer_elapsed, prover_elapsed, verifier_elapsed, pk_size, vk_size, ctx->proof_size);
     fclose(f);
-    sem_post(&file_sem);
+    pthread_mutex_unlock(&file_lock);
 
     zklaim_ctx_free(ctx);
     free(expected);
@@ -213,7 +212,6 @@ int main() {
 #define THREADS 1
     gcry_check_version(GCRYPT_VERSION);
     pthread_t threads[THREADS];
-    sem_init(&file_sem, 0, 1);
 
     for (int i=0; i<THREADS; i++) {
         pthread_create(&threads[i], NULL, thread_work, NULL);
