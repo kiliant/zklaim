@@ -31,6 +31,7 @@ bit_vector memtobv(unsigned char*, size_t);
 
 extern "C" {
 #include <zklaim/zklaim.h>
+#include <zklaim/zklaim_wire.h>
 }
 
 const size_t sha256_digest_len = 256;
@@ -53,7 +54,7 @@ uint64_t extractFromBV(const libff::bit_vector &r, uint8_t slot_offset) {
     // recovering age from bitvector
     for (size_t i = 0; i < 8; i++) {
         for (size_t k=0; k < 8; k++) {
-            var |= (uint64_t) r[slot_offset*64+i*8+k] << (8-1+i*8-k);
+            var |= (uint64_t) r[slot_offset*64+i*8+k] << (63 - i*8 - k);
         }
     }
 
@@ -115,11 +116,11 @@ r1cs_primary_input<FieldT> zklaim_input_map(zklaim_ctx *ctx)
     while (cur != NULL) {
         // construct reference buf
         memset(refs, 0, 512);
-        memcpy(refs, &cur->pl.data_ref[0], 8);
-        memcpy(refs+8, &cur->pl.data_ref[1], 8);
-        memcpy(refs+16, &cur->pl.data_ref[2], 8);
-        memcpy(refs+24, &cur->pl.data_ref[3], 8);
-        memcpy(refs+32, &cur->pl.data_ref[4], 8);
+        zklaim_store_u64(refs + 0, cur->pl.data_ref[0]);
+        zklaim_store_u64(refs + 8, cur->pl.data_ref[1]);
+        zklaim_store_u64(refs + 16, cur->pl.data_ref[2]);
+        zklaim_store_u64(refs + 24, cur->pl.data_ref[3]);
+        zklaim_store_u64(refs + 32, cur->pl.data_ref[4]);
 
         memset(ops, 0, 512);
         set_zklaim_ops(ops, cur->pl.data_op[0]);
@@ -440,17 +441,19 @@ class zklaim_gadget : public gadget<FieldT> {
             // prover inputs:
             for (size_t i = 0; i<ctx->num_of_payloads; i++) {
                 r_vars.push_back(new digest_variable<FieldT>(this->pb, sha256_digest_len + 2*64, "r"));
-                for (int l = 0; l<48; l++) {
-                    for (int k=7; k>=0; k--) {
-                        PL.insert(PL.end(), r_vars.back()->bits.begin()+k+l*8, r_vars.back()->bits.begin()+k+1+l*8);
+                // SHA-256 consumes big-endian words; multipacking consumes
+                // least-significant bits first. Reverse each complete uint64.
+                for (size_t slot = 0; slot < 6; ++slot) {
+                    for (int bit = 63; bit >= 0; --bit) {
+                        PL.emplace_back(r_vars.back()->bits[slot * 64 + bit]);
                     }
                 }
             }
 
             for (size_t i=0; i<ctx->num_of_payloads; i++) {
-                for (int l = 0; l<64; l++) {
-                    for (int k=7; k>=0; k--) {
-                        REF.insert(REF.end(), ref_vals[i]->bits.begin()+k+l*8, ref_vals[i]->bits.begin()+k+1+l*8);
+                for (size_t slot = 0; slot < 8; ++slot) {
+                    for (int bit = 63; bit >= 0; --bit) {
+                        REF.emplace_back(ref_vals[i]->bits[slot * 64 + bit]);
                     }
                 }
             }
@@ -713,11 +716,11 @@ class zklaim_gadget : public gadget<FieldT> {
             unsigned char ops[512];
             while (cur != NULL) {
                 memset(ref_in, 0, sizeof(ref_in));
-                memcpy(ref_in, &cur->pl.data_ref[0], 8);
-                memcpy(ref_in+8, &cur->pl.data_ref[1], 8);
-                memcpy(ref_in+16, &cur->pl.data_ref[2], 8);
-                memcpy(ref_in+24, &cur->pl.data_ref[3], 8);
-                memcpy(ref_in+32, &cur->pl.data_ref[4], 8);
+                zklaim_store_u64(ref_in + 0, cur->pl.data_ref[0]);
+                zklaim_store_u64(ref_in + 8, cur->pl.data_ref[1]);
+                zklaim_store_u64(ref_in + 16, cur->pl.data_ref[2]);
+                zklaim_store_u64(ref_in + 24, cur->pl.data_ref[3]);
+                zklaim_store_u64(ref_in + 32, cur->pl.data_ref[4]);
 
                 memset(ops, 0, 512);
                 set_zklaim_ops(ops, cur->pl.data_op[0]);
@@ -735,19 +738,6 @@ class zklaim_gadget : public gadget<FieldT> {
                 ops_vec = memtobv(ops, 512);
                 r = memtobv(cur->pl.pre, 384);
                 r_vars[i]->bits.fill_with_bits(this->pb, r);
-                uint64_t recvd_data0 = extractFromBV(r, 0),
-                         recvd_data1 = extractFromBV(r, 1),
-                         recvd_data2 = extractFromBV(r, 2),
-                         recvd_data3 = extractFromBV(r, 3),
-                         recvd_data4 = extractFromBV(r, 4);
-                // prover sets the values contained in her credential
-                // this is enforced by the circuit
-                this->pb.val(*data0[i]) = FieldT(recvd_data0);
-                this->pb.val(*data1[i]) = FieldT(recvd_data1);
-                this->pb.val(*data2[i]) = FieldT(recvd_data2);
-                this->pb.val(*data3[i]) = FieldT(recvd_data3);
-                this->pb.val(*data4[i]) = FieldT(recvd_data4);
-
                 //data0_cgs[i]->generate_r1cs_witness();
                 //data1_cgs[i]->generate_r1cs_witness();
                 //data2_cgs[i]->generate_r1cs_witness();
@@ -767,15 +757,23 @@ class zklaim_gadget : public gadget<FieldT> {
             pack_REF->generate_r1cs_witness_from_bits();
             pack_OPS->generate_r1cs_witness_from_bits();
 
+            pack_PL->generate_r1cs_witness_from_bits();
+
             for (size_t i=0; i<ctx->num_of_payloads; i++) {
+                // Take numeric values from the constrained packing instead of
+                // converting uint64_t to native long (which truncates on 32-bit
+                // machines and sign-extends values above INT64_MAX).
+                this->pb.val(*data0[i]) = this->pb.val(plvars[0 + i*6]);
+                this->pb.val(*data1[i]) = this->pb.val(plvars[1 + i*6]);
+                this->pb.val(*data2[i]) = this->pb.val(plvars[2 + i*6]);
+                this->pb.val(*data3[i]) = this->pb.val(plvars[3 + i*6]);
+                this->pb.val(*data4[i]) = this->pb.val(plvars[4 + i*6]);
                 data0_cgs[i]->generate_r1cs_witness();
                 data1_cgs[i]->generate_r1cs_witness();
                 data2_cgs[i]->generate_r1cs_witness();
                 data3_cgs[i]->generate_r1cs_witness();
                 data4_cgs[i]->generate_r1cs_witness();
             }
-
-            pack_PL->generate_r1cs_witness_from_bits();
 
         }
 };

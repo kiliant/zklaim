@@ -162,7 +162,7 @@ int worker() {
     unsigned char* ctx_issuer;
 
     printf("\n[ISSUER] serializing context\n");
-    size_t len = zklaim_ctx_serialize(ctx, &ctx_issuer);
+    size_t len = zklaim_ctx_serialize_credential(ctx, &ctx_issuer);
 
     /*
      * - 4 -

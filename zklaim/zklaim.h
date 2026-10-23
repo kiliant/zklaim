@@ -61,7 +61,6 @@ typedef struct zklaim_proving_key zklaim_proving_key;
 typedef struct zklaim_verification_key zklaim_verification_key;
 typedef struct zklaim_payload zklaim_payload;
 typedef struct zklaim_proof zklaim_proof;
-typedef struct zklaim_header zklaim_header;
 
 struct zklaim_payload {
     uint64_t data_ref[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
@@ -69,7 +68,7 @@ struct zklaim_payload {
     uint64_t salt;
     unsigned char hash[32];
     uint8_t priv;
-    unsigned char pre[48]; // this is by definition set to 0 if public
+    unsigned char pre[48]; // five uint64 attributes and salt, all big-endian
 };
 
 /** Verifier-selected references and operations for one payload, in wire order. */
@@ -77,15 +76,6 @@ typedef struct zklaim_predicate {
     uint64_t data_ref[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
     enum zklaim_op data_op[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
 } zklaim_predicate;
-
-struct zklaim_header {
-    uint32_t num_of_payloads;
-    uint32_t size_of_vk;
-    uint32_t size_of_sig;
-    uint32_t size_of_proof;
-    unsigned char pub_key[32];
-    unsigned char hash[32];
-};
 
 typedef struct zklaim_wrap_payload_ctx {
     zklaim_wrap_payload_ctx *next;
@@ -134,18 +124,29 @@ void zklaim_ctx_free(zklaim_ctx *ctx);
 
 
 /**
- * serialize context into a buffer
+ * serialize a presentation into a versioned, portable buffer
  * the buffer of appropriate size is created by the callee
+ * Pre-images, salt, and privacy flags are never included, even if ctx still
+ * contains witnesses. Use zklaim_ctx_serialize_credential for issuer-to-prover
+ * witness transfer. Legacy unversioned buffers are not supported.
  *
  * @param ctx the context to serialize
  * @param buf the buffer containing the serialized context
- * @return size of the created buffer in bytes
+ * @return size of the created buffer in bytes, or zero on invalid input or
+ *         allocation failure; *buf is NULL on failure
  */
 size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf);
 
+/**
+ * Serialize a credential WITH its private witnesses for issuer-to-prover
+ * transfer over a confidential channel. Never use this for presentations.
+ * The allocation and return conventions match zklaim_ctx_serialize.
+ */
+size_t zklaim_ctx_serialize_credential(zklaim_ctx *ctx, unsigned char **buf);
+
 
 /**
- * deserialize a given buffer into a context
+ * deserialize a versioned credential or presentation into a context
  *
  * @param ctx empty context where to store the deserialization result
  * @param buf the buffer containing the context data
@@ -279,6 +280,9 @@ void zklaim_print(zklaim_ctx *ctx);
  *         An invalid position leaves the payload unchanged.
  */
 int zklaim_set_attr(zklaim_payload *pl, uint64_t attr, uint8_t pos);
+
+/** Read an attribute from the canonical big-endian pre-image. */
+int zklaim_get_attr(const zklaim_payload *pl, uint8_t pos, uint64_t *attr);
 
 
 /**

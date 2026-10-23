@@ -126,7 +126,9 @@ TEST(zklaim, can_set_all_attribute_slots) {
     }
 
     uint64_t actual[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
-    memcpy(actual, pl.pre, sizeof(actual));
+    for (uint8_t pos = 0; pos < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++pos) {
+        ASSERT_EQ(ZKLAIM_OK, zklaim_get_attr(&pl, pos, &actual[pos]));
+    }
     for (size_t pos = 0; pos < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++pos) {
         SCOPED_TRACE(pos);
         EXPECT_EQ(values[pos], actual[pos]);
@@ -152,8 +154,7 @@ TEST(zklaimDeathTest, hashes_payload_when_file_descriptors_are_exhausted) {
         pl.salt = UINT64_C(0x123456789abcdef0);
         zklaim_hash_pl(&pl);
         if (pl.salt == UINT64_C(0x123456789abcdef0)) _exit(4);
-        if (memcmp(pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t),
-                   &pl.salt, sizeof(pl.salt)) != 0) _exit(5);
+        if (zklaim_load_u64(pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t)) != pl.salt) _exit(5);
         _exit(0);
     }, ::testing::ExitedWithCode(0), "");
 }
@@ -163,8 +164,7 @@ TEST(zklaim, payload_hash_includes_fresh_salt) {
     memset(pl.pre, 0xa5, sizeof(pl.pre));
     zklaim_hash_pl(&pl);
 
-    EXPECT_EQ(0, memcmp(pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t),
-                        &pl.salt, sizeof(pl.salt)));
+    EXPECT_EQ(pl.salt, zklaim_load_u64(pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t)));
     unsigned char expected[32];
     SHA256(pl.pre, sizeof(pl.pre), expected);
     EXPECT_EQ(0, memcmp(expected, pl.hash, sizeof(expected)));
@@ -357,7 +357,7 @@ TEST(zklaim, can_detect_invalid_signature) {
 
     unsigned char* ctx_issuer;
 
-    size_t len = zklaim_ctx_serialize(ctx, &ctx_issuer);
+    size_t len = zklaim_ctx_serialize_credential(ctx, &ctx_issuer);
 
     zklaim_ctx* ctx_prover = zklaim_context_new();
     ASSERT_FALSE(zklaim_ctx_deserialize(ctx_prover, ctx_issuer, len));
@@ -817,7 +817,7 @@ TEST(zklaim, three_party_run) {
 
     unsigned char* ctx_issuer;
 
-    size_t len = zklaim_ctx_serialize(ctx, &ctx_issuer);
+    size_t len = zklaim_ctx_serialize_credential(ctx, &ctx_issuer);
 
     zklaim_ctx* ctx_prover = zklaim_context_new();
     ASSERT_FALSE(zklaim_ctx_deserialize(ctx_prover, ctx_issuer, len));

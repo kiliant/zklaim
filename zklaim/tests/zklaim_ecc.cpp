@@ -1,6 +1,11 @@
 #include <gtest/gtest.h>
+#include <memory>
+#include <vector>
+#include <openssl/evp.h>
 extern "C" {
 #include <zklaim/zklaim_ecc.h>
+#include <zklaim/zklaim.h>
+#include <zklaim/zklaim_wire.h>
 }
 
 #define CHECK_GCRY_ERR(err) do {if(err != GPG_ERR_NO_ERROR) { fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err)); ASSERT_TRUE(0);}} while (0)
@@ -55,14 +60,13 @@ TEST(zklaim_ecc, rejects_malformed_signatures_without_output) {
 }
 
 TEST(zklaim_ecc, rejects_oversized_signature_components_without_output) {
-    gcry_mpi_t large = gcry_mpi_new(257);
-    gcry_mpi_set_bit(large, 256);
-    gcry_mpi_t one = gcry_mpi_set_ui(NULL, 1);
+    unsigned char component[33] = {};
     for (bool large_r : {false, true}) {
         SCOPED_TRACE(large_r);
         gcry_sexp_t sig;
         CHECK_GCRY_ERR(gcry_sexp_build(&sig, NULL,
-            "(sig-val(ecdsa(r %M)(s %M)))", large_r ? large : one, large_r ? one : large));
+            "(sig-val(eddsa(r %b)(s %b)))", large_r ? 33 : 32, component,
+            large_r ? 32 : 33, component));
         unsigned char *buf = nullptr;
         size_t len = 99;
         EXPECT_NE(0, zklaim_sig2buf(sig, &buf, &len));
@@ -70,8 +74,6 @@ TEST(zklaim_ecc, rejects_oversized_signature_components_without_output) {
         EXPECT_EQ(0u, len);
         gcry_sexp_release(sig);
     }
-    gcry_mpi_release(one);
-    gcry_mpi_release(large);
 }
 
 TEST(zklaim_ecc, rejects_invalid_signature_buffers) {
@@ -184,14 +186,14 @@ TEST(DISABLED_zklaim_ecc, can_deserizalize_pub) {
 TEST(zklaim_ecc, preserves_leading_zero_public_key) {
     // Test-only key: a valid Ed25519 point whose first byte is zero.
     unsigned char key[] = {
-        0x00, 0xd3, 0xbe, 0x46, 0x9d, 0x15, 0xca, 0x89,
-        0x54, 0xc0, 0xed, 0x28, 0xf7, 0xeb, 0x18, 0x14,
-        0x80, 0x75, 0x7c, 0x36, 0x7c, 0xc3, 0x43, 0x38,
-        0xe9, 0x35, 0x22, 0x8b, 0x8b, 0xb9, 0xe2, 0x6a,
-        0x40, 0x27, 0xcd, 0x96, 0x53, 0xf2, 0x0f, 0x3b,
-        0xfb, 0x6a, 0xe7, 0x53, 0x12, 0x70, 0x7c, 0x31,
-        0xc1, 0x69, 0x76, 0xd7, 0xe8, 0xe8, 0x1a, 0xa4,
-        0x51, 0x3e, 0xaf, 0x5e, 0xa3, 0x97, 0x3a, 0x80
+        0x00, 0x00, 0x1f, 0x8b, 0xea, 0x42, 0xb3, 0xc7,
+        0x4c, 0x50, 0xaa, 0x35, 0x89, 0xb1, 0xaa, 0x06,
+        0x5f, 0x19, 0x68, 0x57, 0xdb, 0x97, 0xa7, 0x5e,
+        0x4a, 0x54, 0x95, 0x3f, 0x09, 0x3e, 0x67, 0x72,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x24
     };
     gcry_sexp_t priv, pub, restored_pub, sig;
     ASSERT_EQ(0, zklaim_buf2pk(key, sizeof(key), &priv));
@@ -356,3 +358,174 @@ TEST(DISABLED_zklaim_ecc, can_detect_invalid_data) {
     ASSERT_FALSE(false);
 }
 
+namespace {
+std::vector<unsigned char> ed25519_hex(const char *hex) {
+    std::vector<unsigned char> bytes;
+    while (*hex) {
+        auto nibble = [](char c) { return c <= '9' ? c - '0' : c - 'a' + 10; };
+        bytes.push_back(static_cast<unsigned char>((nibble(hex[0]) << 4) | nibble(hex[1])));
+        hex += 2;
+    }
+    return bytes;
+}
+} // namespace
+
+TEST(zklaim_ecc, matches_rfc8032_and_interoperates_with_openssl) {
+    // RFC 8032 section 7.1, tests 1 and 2 (pure Ed25519, no external prehash).
+    const char *seeds[] = {
+        "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+        "4ccd089b28ff96da9db6c346ec114e0f5b8a319f35aba624da8cf6ed4fb8a6fb"
+    };
+    const char *public_keys[] = {
+        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+        "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c"
+    };
+    const char *messages[] = {"", "72"};
+    const char *signatures[] = {
+        "e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b",
+        "92a009a9f0d4cab8720e820b5f642540a2b27b5416503f8fb3762223ebdb69da085ac1e43e15996e458f3613d0f11d8c387b2eaeb4302aeeb00d291612bb0c00"
+    };
+    for (size_t i = 0; i < 2; ++i) {
+        SCOPED_TRACE(i);
+        auto seed = ed25519_hex(seeds[i]);
+        auto pub_bytes = ed25519_hex(public_keys[i]);
+        auto message = ed25519_hex(messages[i]);
+        const auto expected = ed25519_hex(signatures[i]);
+        auto private_bytes = pub_bytes;
+        private_bytes.insert(private_bytes.end(), seed.begin(), seed.end());
+        gcry_sexp_t priv = nullptr, pub = nullptr, sig = nullptr;
+        ASSERT_EQ(0, zklaim_buf2pk(private_bytes.data(), private_bytes.size(), &priv));
+        ASSERT_EQ(0, zklaim_buf2pub(pub_bytes.data(), pub_bytes.size(), &pub));
+        ASSERT_EQ(0, zklaim_sign(message.data(), message.size(), &sig, priv));
+        unsigned char *encoded = nullptr;
+        size_t encoded_size = 0;
+        ASSERT_EQ(0, zklaim_sig2buf(sig, &encoded, &encoded_size));
+        std::unique_ptr<unsigned char, decltype(&free)> storage(encoded, free);
+        ASSERT_EQ(expected.size(), encoded_size);
+        EXPECT_EQ(0, memcmp(expected.data(), encoded, encoded_size));
+        EXPECT_EQ(0, zklaim_verify(message.data(), message.size(), sig, pub));
+
+        std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> openssl_key(
+            EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, nullptr, seed.data(), seed.size()), EVP_PKEY_free);
+        std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> md(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+        ASSERT_NE(nullptr, openssl_key);
+        ASSERT_NE(nullptr, md);
+        ASSERT_EQ(1, EVP_DigestVerifyInit(md.get(), nullptr, nullptr, nullptr, openssl_key.get()));
+        EXPECT_EQ(1, EVP_DigestVerify(md.get(), encoded, encoded_size, message.data(), message.size()));
+        ASSERT_EQ(1, EVP_DigestSignInit(md.get(), nullptr, nullptr, nullptr, openssl_key.get()));
+        unsigned char openssl_signature[64];
+        size_t openssl_size = sizeof(openssl_signature);
+        ASSERT_EQ(1, EVP_DigestSign(md.get(), openssl_signature, &openssl_size, message.data(), message.size()));
+        EXPECT_EQ(0, memcmp(expected.data(), openssl_signature, openssl_size));
+        gcry_sexp_release(sig);
+        ASSERT_EQ(0, zklaim_buf2sig(openssl_signature, openssl_size, &sig));
+        EXPECT_EQ(0, zklaim_verify(message.data(), message.size(), sig, pub));
+        gcry_sexp_release(sig);
+        // A repeated signing operation has the same deterministic RFC signature.
+        ASSERT_EQ(0, zklaim_sign(message.data(), message.size(), &sig, priv));
+        unsigned char *again = nullptr;
+        size_t again_size = 0;
+        ASSERT_EQ(0, zklaim_sig2buf(sig, &again, &again_size));
+        EXPECT_EQ(0, memcmp(expected.data(), again, again_size));
+        free(again);
+        gcry_sexp_release(sig);
+        gcry_sexp_release(pub);
+        gcry_sexp_release(priv);
+    }
+}
+
+TEST(zklaim_ecc, signature_encoding_preserves_leading_zero_octets) {
+    unsigned char bytes[64] = {};
+    bytes[1] = 0x80;
+    bytes[33] = 0x40;
+    gcry_sexp_t sig = nullptr;
+    ASSERT_EQ(0, zklaim_buf2sig(bytes, sizeof(bytes), &sig));
+    unsigned char *encoded = nullptr;
+    size_t size = 0;
+    ASSERT_EQ(0, zklaim_sig2buf(sig, &encoded, &size));
+    ASSERT_EQ(sizeof(bytes), size);
+    EXPECT_EQ(0, memcmp(bytes, encoded, size));
+    free(encoded);
+    gcry_sexp_release(sig);
+}
+
+TEST(zklaim_ecc, rejects_legacy_ecdsa_keys_and_inconsistent_seed_pairs) {
+    gcry_sexp_t params = nullptr, legacy = nullptr, sig = nullptr;
+    CHECK_GCRY_ERR(gcry_sexp_build(&params, nullptr, "(genkey(ecc(curve Ed25519)))"));
+    CHECK_GCRY_ERR(gcry_pk_genkey(&legacy, params));
+    unsigned char message[] = "legacy keys must be regenerated";
+    EXPECT_NE(0, zklaim_sign(message, sizeof(message), &sig, legacy));
+    EXPECT_EQ(nullptr, sig);
+    unsigned char *encoded = nullptr;
+    size_t size = 0;
+    EXPECT_NE(0, zklaim_pk2buf(legacy, &encoded, &size));
+    EXPECT_EQ(nullptr, encoded);
+    gcry_sexp_release(legacy);
+    gcry_sexp_release(params);
+    unsigned char inconsistent[64] = {};
+    EXPECT_NE(0, zklaim_buf2pk(inconsistent, sizeof(inconsistent), &legacy));
+    EXPECT_EQ(nullptr, legacy);
+    auto mismatched = ed25519_hex(
+        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+        "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+    mismatched.back() ^= 1;
+    EXPECT_NE(0, zklaim_buf2pk(mismatched.data(), mismatched.size(), &legacy));
+    EXPECT_EQ(nullptr, legacy);
+}
+
+TEST(zklaim_ecc, context_signature_matches_specified_domain_and_lengths) {
+    auto pub = ed25519_hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
+    auto seed = ed25519_hex("9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+    auto bytes = pub;
+    bytes.insert(bytes.end(), seed.begin(), seed.end());
+    gcry_sexp_t key = nullptr;
+    ASSERT_EQ(0, zklaim_buf2pk(bytes.data(), bytes.size(), &key));
+    zklaim_ctx ctx = {};
+    unsigned char vk[] = {'1', '2', '3'};
+    ctx.vk = vk;
+    ctx.vk_size = sizeof(vk);
+    zklaim_wrap_payload_ctx payload = {};
+    for (size_t i = 0; i < 32; ++i) payload.pl.hash[i] = static_cast<unsigned char>(i);
+    ctx.pl_ctx_head = &payload;
+    ctx.num_of_payloads = 1;
+    ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_sign(&ctx, key));
+    gcry_sexp_release(key);
+    std::vector<unsigned char> signed_bytes = {
+        'Z','K','S','G', 0,1, 1,zklaim_wire_curve(), 0,0,0,1, 0,0,0,3
+    };
+    signed_bytes.insert(signed_bytes.end(), payload.pl.hash, payload.pl.hash + 32);
+    signed_bytes.insert(signed_bytes.end(), vk, vk + sizeof(vk));
+    std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> openssl_key(
+        EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, pub.data(), pub.size()), EVP_PKEY_free);
+    std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> md(EVP_MD_CTX_new(), EVP_MD_CTX_free);
+    ASSERT_NE(nullptr, openssl_key);
+    ASSERT_NE(nullptr, md);
+    ASSERT_EQ(1, EVP_DigestVerifyInit(md.get(), nullptr, nullptr, nullptr, openssl_key.get()));
+    EXPECT_EQ(1, EVP_DigestVerify(md.get(), ctx.signature, sizeof(ctx.signature), signed_bytes.data(), signed_bytes.size()));
+    signed_bytes[5] ^= 1;
+    EXPECT_NE(1, EVP_DigestVerify(md.get(), ctx.signature, sizeof(ctx.signature), signed_bytes.data(), signed_bytes.size()));
+}
+
+TEST(zklaim_ecc, rejects_ecdsa_labels_and_noncanonical_ed25519_scalars) {
+    auto pub_bytes = ed25519_hex("d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a");
+    auto bytes = ed25519_hex("e5564300c360ac729086e2cc806e828a84877f1eb8e5d974d873e065224901555fb8821590a33bacc61e39701cf9b46bd25bf5f0595bbe24655141438e7a100b");
+    const auto order = ed25519_hex("edd3f55c1a631258d69cf7a2def9de1400000000000000000000000000000010");
+    gcry_sexp_t pub = nullptr, sig = nullptr;
+    ASSERT_EQ(0, zklaim_buf2pub(pub_bytes.data(), pub_bytes.size(), &pub));
+    CHECK_GCRY_ERR(gcry_sexp_build(&sig, nullptr, "(sig-val(ecdsa(r %b)(s %b)))", 32, bytes.data(), 32, bytes.data() + 32));
+    EXPECT_NE(0, zklaim_verify(nullptr, 0, sig, pub));
+    gcry_sexp_release(sig);
+    // S + L represents the same group scalar but is forbidden by RFC 8032.
+    unsigned int carry = 0;
+    for (size_t i = 0; i < 32; ++i) {
+        carry += static_cast<unsigned int>(bytes[32 + i]) + order[i];
+        bytes[32 + i] = static_cast<unsigned char>(carry);
+        carry >>= 8;
+    }
+    EXPECT_NE(0, zklaim_buf2sig(bytes.data(), bytes.size(), &sig));
+    EXPECT_EQ(nullptr, sig);
+    CHECK_GCRY_ERR(gcry_sexp_build(&sig, nullptr, "(sig-val(eddsa(r %b)(s %b)))", 32, bytes.data(), 32, bytes.data() + 32));
+    EXPECT_NE(0, zklaim_verify(nullptr, 0, sig, pub));
+    gcry_sexp_release(sig);
+    gcry_sexp_release(pub);
+}

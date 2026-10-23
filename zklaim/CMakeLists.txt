@@ -59,6 +59,9 @@ add_executable(
 
 target_link_libraries(bttestc snark zklaim PkgConfig::GCRYPT gtest)
 
+add_executable(wire_portability tests/wire_portability.cpp)
+target_link_libraries(wire_portability zklaim PkgConfig::GCRYPT)
+
 install(
     DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/ DESTINATION "include/zklaim"
     FILES_MATCHING

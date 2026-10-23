@@ -29,7 +29,23 @@
 #include <openssl/sha.h>
 #include <stdio.h>
 #include <string.h>
-#include <arpa/inet.h>
+#include <zklaim/zklaim_wire.h>
+
+unsigned char zklaim_wire_curve(void) {
+#if defined(CURVE_ALT_BN128)
+    return 1;
+#elif defined(CURVE_BN128)
+    return 2;
+#elif defined(CURVE_EDWARDS)
+    return 3;
+#elif defined(CURVE_MNT4)
+    return 4;
+#elif defined(CURVE_MNT6)
+    return 5;
+#else
+    return 0;
+#endif
+}
 
 zklaim_ctx* zklaim_context_new() {
     zklaim_ctx *ctx = (zklaim_ctx*) calloc(1, sizeof(zklaim_ctx));
@@ -95,7 +111,7 @@ void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl) {
 void zklaim_hash_pl(zklaim_payload *pl) {
     gcry_randomize(&pl->salt, sizeof(pl->salt), GCRY_STRONG_RANDOM);
     // copy over salt to pre
-    memcpy((pl->pre + 5*sizeof(uint64_t)), &pl->salt, sizeof(uint64_t));
+    zklaim_store_u64(pl->pre + 5 * sizeof(uint64_t), pl->salt);
     SHA256((unsigned char*) pl->pre, sizeof(pl->pre), pl->hash);
 }
 
@@ -140,12 +156,10 @@ void zklaim_print(zklaim_ctx *ctx){
     int i;
     while (cur != NULL) {
         // recover data
-        memcpy(&data[0], cur->pl.pre, 8);
-        memcpy(&data[1], cur->pl.pre+8, 8);
-        memcpy(&data[2], cur->pl.pre+16, 8);
-        memcpy(&data[3], cur->pl.pre+24, 8);
-        memcpy(&data[4], cur->pl.pre+32, 8);
-        memcpy(&salt, cur->pl.pre+40, 8);
+        for (uint8_t pos = 0; pos < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++pos) {
+            zklaim_get_attr(&cur->pl, pos, &data[pos]);
+        }
+        salt = zklaim_load_u64(cur->pl.pre + 40);
         printf("======================================================================\n");
         printf("=======          viewing information about payload #%zu          =======\n", counter);
         printf("======================================================================\n");
@@ -170,12 +184,18 @@ void zklaim_print(zklaim_ctx *ctx){
 
 // set attribute at given position within pl
 int zklaim_set_attr(zklaim_payload *pl, uint64_t attr, uint8_t pos) {
-    if (pos >= ZKLAIM_MAX_PAYLOAD_ATTRIBUTES) {
+    if (pl == NULL || pos >= ZKLAIM_MAX_PAYLOAD_ATTRIBUTES) {
         fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "attribute position is out of range");
 
         return ZKLAIM_ERROR;
     }
-    memcpy((pl->pre + pos*8), &attr, 8);
+    zklaim_store_u64(pl->pre + pos * 8, attr);
+    return ZKLAIM_OK;
+}
+
+int zklaim_get_attr(const zklaim_payload *pl, uint8_t pos, uint64_t *attr) {
+    if (pl == NULL || attr == NULL || pos >= ZKLAIM_MAX_PAYLOAD_ATTRIBUTES) return ZKLAIM_ERROR;
+    *attr = zklaim_load_u64(pl->pre + pos * 8);
     return ZKLAIM_OK;
 }
 
@@ -190,30 +210,33 @@ void zklaim_clear_pres(zklaim_ctx *ctx) {
     }
 }
 
-int plain_ctx(zklaim_ctx *ctx, unsigned char **buf, size_t *total_length) {
-    size_t tl;
-    // lay out structure in buffer
-    tl = ctx->num_of_payloads * sizeof(((zklaim_payload*)0)->hash);
-    tl += ctx->vk_size;
+static int plain_ctx(zklaim_ctx *ctx, unsigned char **buf, size_t *total_length) {
+    *buf = NULL;
     *total_length = 0;
-    *buf = (unsigned char*) calloc(1, tl ? tl : 1);
-    if (*buf == NULL) {
-        return ZKLAIM_ERROR;
+    if (ctx->num_of_payloads > UINT32_MAX || ctx->vk_size > UINT32_MAX ||
+        ctx->vk_size > SIZE_MAX - 16 || (ctx->vk_size > 0 && ctx->vk == NULL) ||
+        ctx->num_of_payloads > (SIZE_MAX - 16 - ctx->vk_size) / 32) return ZKLAIM_ERROR;
+    const size_t len = 16 + ctx->num_of_payloads * 32 + ctx->vk_size;
+    unsigned char *encoded = calloc(1, len);
+    if (encoded == NULL) return ZKLAIM_ERROR;
+    // Domain, version, algorithm, curve and explicit lengths bind the signature
+    // to this protocol, without fixing the prover's selectable predicates.
+    memcpy(encoded, "ZKSG", 4);
+    encoded[5] = ZKLAIM_WIRE_VERSION;
+    encoded[6] = 1; // RFC 8032 Ed25519
+    encoded[7] = zklaim_wire_curve();
+    zklaim_store_u32(encoded + 8, (uint32_t) ctx->num_of_payloads);
+    zklaim_store_u32(encoded + 12, (uint32_t) ctx->vk_size);
+    const zklaim_wrap_payload_ctx *node = ctx->pl_ctx_head;
+    for (size_t i = 0; i < ctx->num_of_payloads; ++i) {
+        if (node == NULL) { free(encoded); return ZKLAIM_ERROR; }
+        memcpy(encoded + 16 + i * 32, node->pl.hash, 32);
+        node = node->next;
     }
-
-    // serialize payloads
-    zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
-    for (size_t i=0; i<ctx->num_of_payloads; i++) {
-        memcpy(*buf+i*sizeof(((zklaim_payload*)0)->hash), cur->pl.hash, sizeof(((zklaim_payload*)0)->hash));
-        cur = cur->next;
-    }
-
-    // serialize verification key
-    if (ctx->vk_size > 0) {
-        memcpy(*buf + ctx->num_of_payloads * sizeof(((zklaim_payload*)0)->hash), ctx->vk, ctx->vk_size);
-    }
-
-    *total_length = tl;
+    if (node != NULL) { free(encoded); return ZKLAIM_ERROR; }
+    if (ctx->vk_size > 0) memcpy(encoded + 16 + ctx->num_of_payloads * 32, ctx->vk, ctx->vk_size);
+    *buf = encoded;
+    *total_length = len;
     return ZKLAIM_OK;
 }
 
@@ -346,76 +369,72 @@ cleanup:
     return res;
 }
 
+static int valid_wire_op(unsigned char op) {
+    switch (op) {
+        case zklaim_less: case zklaim_less_or_eq: case zklaim_eq:
+        case zklaim_greater_or_eq: case zklaim_greater: case zklaim_not_eq:
+        case zklaim_noop: return 1;
+        default: return 0;
+    }
+}
+
 int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len) {
-    if (ctx == NULL || buf == NULL || len < sizeof(zklaim_header)) {
-        return ZKLAIM_ERROR;
-    }
-    // Import into an empty context so existing storage is never lost or appended.
-    if (ctx->num_of_payloads != 0 || ctx->pl_ctx_head != NULL ||
-        ctx->pk_size != 0 || ctx->pk != NULL ||
-        ctx->vk_size != 0 || ctx->vk != NULL ||
-        ctx->proof_size != 0 || ctx->proof != NULL) {
-        return ZKLAIM_ERROR;
-    }
-
-    // The caller's buffer need not be aligned for either serialized structure.
-    zklaim_header header;
-    memcpy(&header, buf, sizeof(header));
-    unsigned char header_integrity[SHA256_DIGEST_LENGTH];
-    SHA256(buf, offsetof(zklaim_header, hash), header_integrity);
-    if (memcmp(header_integrity, header.hash, sizeof(header.hash)) != 0) {
-        return ZKLAIM_ERROR;
-    }
-
-    const size_t num_of_payloads = ntohl(header.num_of_payloads);
-    const size_t vk_size = ntohl(header.size_of_vk);
-    const size_t proof_size = ntohl(header.size_of_proof);
-    if (ntohl(header.size_of_sig) != sizeof(ctx->signature)) {
-        return ZKLAIM_ERROR;
-    }
-
-    // Subtract each section from the supplied length. Check before multiplying
-    // or subtracting, so even UINT32_MAX sizes cannot wrap on 32-bit platforms.
-    size_t remaining = len - sizeof(header);
-    if (num_of_payloads > remaining / sizeof(zklaim_payload)) {
-        return ZKLAIM_ERROR;
-    }
-    remaining -= num_of_payloads * sizeof(zklaim_payload);
-    if (vk_size > remaining) {
-        return ZKLAIM_ERROR;
-    }
+    if (ctx == NULL || buf == NULL || len < ZKLAIM_WIRE_HEADER_SIZE ||
+        ctx->num_of_payloads != 0 || ctx->pl_ctx_head != NULL ||
+        ctx->pk_size != 0 || ctx->pk != NULL || ctx->vk_size != 0 || ctx->vk != NULL ||
+        ctx->proof_size != 0 || ctx->proof != NULL) return ZKLAIM_ERROR;
+    // No struct casts: every field has a specified offset and byte order.
+    if (memcmp(buf, "ZKLM", 4) != 0 || buf[4] != 0 || buf[5] != ZKLAIM_WIRE_VERSION ||
+        (buf[6] != ZKLAIM_WIRE_CREDENTIAL && buf[6] != ZKLAIM_WIRE_PRESENTATION) ||
+        buf[7] != zklaim_wire_curve() || zklaim_load_u32(buf + 20) != 0) return ZKLAIM_ERROR;
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    SHA256(buf, 56, digest);
+    if (memcmp(digest, buf + 56, sizeof(digest)) != 0) return ZKLAIM_ERROR;
+    const int credential = buf[6] == ZKLAIM_WIRE_CREDENTIAL;
+    const size_t payload_size = credential ? ZKLAIM_WIRE_CREDENTIAL_PAYLOAD_SIZE : ZKLAIM_WIRE_PUBLIC_PAYLOAD_SIZE;
+    const size_t count = zklaim_load_u32(buf + 8);
+    const size_t vk_size = zklaim_load_u32(buf + 12);
+    const size_t proof_size = zklaim_load_u32(buf + 16);
+    size_t remaining = len - ZKLAIM_WIRE_HEADER_SIZE;
+    if (count > remaining / payload_size) return ZKLAIM_ERROR;
+    remaining -= count * payload_size;
+    if (vk_size > remaining) return ZKLAIM_ERROR;
     remaining -= vk_size;
-    if (sizeof(ctx->signature) > remaining) {
-        return ZKLAIM_ERROR;
-    }
+    if (sizeof(ctx->signature) > remaining) return ZKLAIM_ERROR;
     remaining -= sizeof(ctx->signature);
-    if (proof_size != remaining) {
-        return ZKLAIM_ERROR;
-    }
+    if (proof_size != remaining) return ZKLAIM_ERROR;
 
-    // Commit only after every allocation and copy succeeds.
     zklaim_ctx *parsed = zklaim_context_new();
-    if (parsed == NULL) {
-        return ZKLAIM_ERROR;
-    }
-    const unsigned char *cursor = buf + sizeof(header);
+    if (parsed == NULL) return ZKLAIM_ERROR;
+    const unsigned char *cursor = buf + ZKLAIM_WIRE_HEADER_SIZE;
     zklaim_wrap_payload_ctx **tail = &parsed->pl_ctx_head;
-    for (size_t i = 0; i < num_of_payloads; ++i) {
+    for (size_t i = 0; i < count; ++i, cursor += payload_size) {
         zklaim_wrap_payload_ctx *node = calloc(1, sizeof(*node));
-        if (node == NULL) {
-            goto failure;
-        }
-        memcpy(&node->pl, cursor, sizeof(node->pl));
-        cursor += sizeof(node->pl);
+        if (node == NULL) goto failure;
         *tail = node;
         tail = &node->next;
+        for (size_t attr = 0; attr < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++attr) {
+            node->pl.data_ref[attr] = zklaim_load_u64(cursor + attr * 8);
+            if (!valid_wire_op(cursor[40 + attr])) goto failure;
+            node->pl.data_op[attr] = (enum zklaim_op) cursor[40 + attr];
+        }
+        memcpy(node->pl.hash, cursor + 45, 32);
+        node->pl.priv = 1;
+        if (credential) {
+            if (cursor[77] > 1) goto failure;
+            node->pl.priv = cursor[77];
+            if (node->pl.priv == 1) {
+                for (size_t j = 0; j < 48; ++j) if (cursor[78 + j] != 0) goto failure;
+            } else {
+                memcpy(node->pl.pre, cursor + 78, 48);
+                node->pl.salt = zklaim_load_u64(node->pl.pre + 40);
+            }
+        }
     }
-    parsed->num_of_payloads = num_of_payloads;
+    parsed->num_of_payloads = count;
     if (vk_size > 0) {
         parsed->vk = malloc(vk_size);
-        if (parsed->vk == NULL) {
-            goto failure;
-        }
+        if (parsed->vk == NULL) goto failure;
         memcpy(parsed->vk, cursor, vk_size);
     }
     parsed->vk_size = vk_size;
@@ -424,70 +443,87 @@ int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len) {
     cursor += sizeof(parsed->signature);
     if (proof_size > 0) {
         parsed->proof = malloc(proof_size);
-        if (parsed->proof == NULL) {
-            goto failure;
-        }
+        if (parsed->proof == NULL) goto failure;
         memcpy(parsed->proof, cursor, proof_size);
     }
     parsed->proof_size = proof_size;
-    memcpy(parsed->pub_key, header.pub_key, sizeof(parsed->pub_key));
+    memcpy(parsed->pub_key, buf + 24, sizeof(parsed->pub_key));
     *ctx = *parsed;
     free(parsed);
     return ZKLAIM_OK;
-
 failure:
     zklaim_ctx_free(parsed);
     return ZKLAIM_ERROR;
 }
 
+static size_t serialize_context(zklaim_ctx *ctx, unsigned char **buf, int credential) {
+    if (buf == NULL) return 0;
+    *buf = NULL;
+    if (ctx == NULL || ctx->num_of_payloads > UINT32_MAX || ctx->vk_size > UINT32_MAX ||
+        ctx->proof_size > UINT32_MAX || (ctx->vk_size > 0 && ctx->vk == NULL) ||
+        (ctx->proof_size > 0 && ctx->proof == NULL)) return 0;
+    const size_t payload_size = credential ? ZKLAIM_WIRE_CREDENTIAL_PAYLOAD_SIZE : ZKLAIM_WIRE_PUBLIC_PAYLOAD_SIZE;
+    size_t total = ZKLAIM_WIRE_HEADER_SIZE + sizeof(ctx->signature);
+    if (ctx->vk_size > SIZE_MAX - total) return 0;
+    total += ctx->vk_size;
+    if (ctx->proof_size > SIZE_MAX - total) return 0;
+    total += ctx->proof_size;
+    if (ctx->num_of_payloads > (SIZE_MAX - total) / payload_size) return 0;
+    total += ctx->num_of_payloads * payload_size;
+    const zklaim_wrap_payload_ctx *check = ctx->pl_ctx_head;
+    for (size_t i = 0; i < ctx->num_of_payloads; ++i) {
+        if (check == NULL) return 0;
+        check = check->next;
+    }
+    if (check != NULL) return 0;
+    unsigned char *encoded = calloc(1, total);
+    if (encoded == NULL) return 0;
+    memcpy(encoded, "ZKLM", 4);
+    encoded[5] = ZKLAIM_WIRE_VERSION;
+    encoded[6] = credential ? ZKLAIM_WIRE_CREDENTIAL : ZKLAIM_WIRE_PRESENTATION;
+    encoded[7] = zklaim_wire_curve();
+    zklaim_store_u32(encoded + 8, (uint32_t) ctx->num_of_payloads);
+    zklaim_store_u32(encoded + 12, (uint32_t) ctx->vk_size);
+    zklaim_store_u32(encoded + 16, (uint32_t) ctx->proof_size);
+    memcpy(encoded + 24, ctx->pub_key, 32);
+    SHA256(encoded, 56, encoded + 56);
+    unsigned char *cursor = encoded + ZKLAIM_WIRE_HEADER_SIZE;
+    const zklaim_wrap_payload_ctx *node = ctx->pl_ctx_head;
+    for (size_t i = 0; i < ctx->num_of_payloads; ++i, cursor += payload_size) {
+        if (node == NULL) goto failure;
+        for (size_t attr = 0; attr < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++attr) {
+            if (!valid_wire_op((unsigned char) node->pl.data_op[attr]) ||
+                node->pl.data_op[attr] > UINT8_MAX || node->pl.data_op[attr] < 0) goto failure;
+            zklaim_store_u64(cursor + attr * 8, node->pl.data_ref[attr]);
+            cursor[40 + attr] = (unsigned char) node->pl.data_op[attr];
+        }
+        memcpy(cursor + 45, node->pl.hash, 32);
+        if (credential) {
+            if (node->pl.priv > 1) goto failure;
+            cursor[77] = node->pl.priv;
+            if (node->pl.priv == 0) memcpy(cursor + 78, node->pl.pre, 48);
+        }
+        node = node->next;
+    }
+    if (node != NULL) goto failure;
+    if (ctx->vk_size > 0) memcpy(cursor, ctx->vk, ctx->vk_size);
+    cursor += ctx->vk_size;
+    memcpy(cursor, ctx->signature, sizeof(ctx->signature));
+    cursor += sizeof(ctx->signature);
+    if (ctx->proof_size > 0) memcpy(cursor, ctx->proof, ctx->proof_size);
+    *buf = encoded;
+    return total;
+failure:
+    free(encoded);
+    return 0;
+}
+
 size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf) {
-    // 1 - build zklaim_header
-    size_t total_length;
+    return serialize_context(ctx, buf, 0);
+}
 
-    total_length = sizeof(zklaim_header);
-    total_length += ctx->num_of_payloads * sizeof(zklaim_payload);
-    total_length += ctx->vk_size + ctx->proof_size;
-    total_length += sizeof(((zklaim_ctx*)0)->signature);
-
-    // 2 - allocate buf of appropriate size
-    *buf = (unsigned char*) calloc(1, total_length);
-    if (*buf == NULL) {
-        fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "could not allocate");
-        return 0;
-    }
-
-    // 3 - fill in header
-    zklaim_header *header = (zklaim_header*) *buf;
-    header->num_of_payloads = htonl(ctx->num_of_payloads);
-    header->size_of_vk = htonl(ctx->vk_size);
-    header->size_of_sig = htonl(sizeof(((zklaim_ctx*)0)->signature));
-    header->size_of_proof = htonl(ctx->proof_size);
-    memcpy(header->pub_key, ctx->pub_key, sizeof(header->pub_key));
-    // hash header values
-    SHA256((unsigned char*)header, offsetof(zklaim_header, hash), header->hash);
-
-    // 3 - serialize payloads
-    zklaim_payload *pl = (zklaim_payload*) (*buf+sizeof(zklaim_header));
-    zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
-    for (size_t i=0; i<ctx->num_of_payloads; i++) {
-        pl[i] = cur->pl;
-        cur = cur->next;
-    }
-
-    // 4 - serialize verification key
-    if (ctx->vk_size > 0) {
-        memcpy(*buf+sizeof(zklaim_header) + ctx->num_of_payloads*sizeof(zklaim_payload), ctx->vk, ctx->vk_size);
-    }
-
-    // 5 - serialize signature
-    memcpy(*buf+sizeof(zklaim_header) + ctx->num_of_payloads*sizeof(zklaim_payload) + ctx->vk_size, ctx->signature, sizeof(((zklaim_ctx*)0)->signature));
-
-    // 6 - serialize proof
-    if (ctx->proof_size > 0) {
-        memcpy(*buf+sizeof(zklaim_header) + ctx->num_of_payloads*sizeof(zklaim_payload) + ctx->vk_size + sizeof(((zklaim_ctx*)0)->signature), ctx->proof, ctx->proof_size);
-    }
-
-    return total_length;
+size_t zklaim_ctx_serialize_credential(zklaim_ctx *ctx, unsigned char **buf) {
+    return serialize_context(ctx, buf, 1);
 }
 
 // test method for wrapping a c++ function in c
