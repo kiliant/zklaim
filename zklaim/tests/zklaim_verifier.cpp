@@ -37,8 +37,42 @@ protected:
         ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_deserialize(received.get(), presentation.data(), presentation.size()));
     }
 
+    static const zklaim_test_keys &keys() {
+        return zklaim_keys_for(2);
+    }
+
+    static int verify_with(zklaim_ctx *ctx, const unsigned char *issuer_key,
+                           const zklaim_predicate *expected, size_t count,
+                           const unsigned char *nonce = zklaim_test_nonce) {
+        return zklaim_ctx_verify(ctx, issuer_key, keys().vk, keys().vk_size, expected, count, nonce);
+    }
+
     int verify() {
-        return zklaim_ctx_verify(received.get(), trusted_key, policy, 2);
+        return verify_with(received.get(), trusted_key, policy, 2);
+    }
+
+    // Issues a two-payload credential with the given attribute 0 and returns
+    // its presentation, proved for the given nonce.
+    static std::vector<unsigned char> present(gcry_sexp_t priv, const unsigned char issuer_key[32],
+                                              uint64_t age, const unsigned char *nonce,
+                                              ctx_ptr *witnesses = nullptr) {
+        ctx_ptr ctx(zklaim_context_new(), zklaim_ctx_free);
+        if (!ctx) return {};
+        memcpy(ctx->pub_key, issuer_key, 32);
+        for (size_t i = 0; i < 2; ++i) {
+            zklaim_payload pl = {};
+            memcpy(pl.data_ref, policy[i].data_ref, sizeof(pl.data_ref));
+            memcpy(pl.data_op, policy[i].data_op, sizeof(pl.data_op));
+            if (zklaim_set_attr(&pl, age, 0) || zklaim_set_attr(&pl, 42, 1) ||
+                zklaim_set_attr(&pl, 599, 4)) return {};
+            zklaim_add_pl(ctx.get(), pl);
+        }
+        zklaim_hash_ctx(ctx.get());
+        if (zklaim_ctx_sign(ctx.get(), priv) != ZKLAIM_OK ||
+            zklaim_proof_generate(ctx.get(), keys().pk, keys().pk_size, nonce) != ZKLAIM_OK) return {};
+        auto blob = serialize(ctx.get());
+        if (witnesses) *witnesses = std::move(ctx);
+        return blob;
     }
 
 public:
@@ -53,31 +87,9 @@ public:
         ASSERT_EQ(sizeof(trusted_key), key_size);
         memcpy(trusted_key, key, key_size);
 
-        issuer.reset(zklaim_context_new());
-        ASSERT_NE(nullptr, issuer);
-        memcpy(issuer->pub_key, trusted_key, sizeof(trusted_key));
-        for (size_t i = 0; i < 2; ++i) {
-            zklaim_payload pl = {};
-            memcpy(pl.data_ref, policy[i].data_ref, sizeof(pl.data_ref));
-            memcpy(pl.data_op, policy[i].data_op, sizeof(pl.data_op));
-            ASSERT_EQ(ZKLAIM_OK, zklaim_set_attr(&pl, 23, 0));
-            ASSERT_EQ(ZKLAIM_OK, zklaim_set_attr(&pl, 42, 1));
-            ASSERT_EQ(ZKLAIM_OK, zklaim_set_attr(&pl, 599, 4));
-            zklaim_add_pl(issuer.get(), pl);
-        }
-        zklaim_hash_ctx(issuer.get());
-        ASSERT_EQ(ZKLAIM_OK, zklaim_trusted_setup(issuer.get()));
-        ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_sign(issuer.get(), priv.value));
-        ASSERT_EQ(ZKLAIM_OK, zklaim_proof_generate(issuer.get()));
-
+        ASSERT_NE(nullptr, keys().pk);
         // Keep the issuer's witnesses for the weaker-predicate regression.
-        auto issued = serialize(issuer.get(), true);
-        ASSERT_FALSE(issued.empty());
-        ctx_ptr blinded(zklaim_context_new(), zklaim_ctx_free);
-        ASSERT_NE(nullptr, blinded);
-        ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_deserialize(blinded.get(), issued.data(), issued.size()));
-        zklaim_clear_pres(blinded.get());
-        presentation = serialize(blinded.get());
+        presentation = present(priv.value, trusted_key, 23, zklaim_test_nonce, &issuer);
         ASSERT_FALSE(presentation.empty());
     }
 
@@ -119,7 +131,7 @@ TEST_F(zklaim_verifier, rejects_self_issued_credentials_and_relabelled_issuer_ke
     ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_sign(received.get(), attacker.value));
 
     // This is a fully valid proof and signature under the attacker's own key.
-    EXPECT_EQ(ZKLAIM_OK, zklaim_ctx_verify(received.get(), key, policy, 2));
+    EXPECT_EQ(ZKLAIM_OK, verify_with(received.get(), key, policy, 2));
     EXPECT_EQ(ZKLAIM_UNTRUSTED_ISSUER, verify());
     // Claiming the pinned issuer's identity cannot make its signature valid.
     memcpy(received->pub_key, trusted_key, sizeof(trusted_key));
@@ -135,12 +147,12 @@ TEST_F(zklaim_verifier, checks_every_reference_and_operation_in_every_payload) {
             memcpy(expected, policy, sizeof(expected));
             ++expected[payload].data_ref[attr];
             EXPECT_EQ(ZKLAIM_UNEXPECTED_PREDICATE,
-                      zklaim_ctx_verify(received.get(), trusted_key, expected, 2));
+                      verify_with(received.get(), trusted_key, expected, 2));
             memcpy(expected, policy, sizeof(expected));
             expected[payload].data_op[attr] =
                 policy[payload].data_op[attr] == zklaim_noop ? zklaim_eq : zklaim_noop;
             EXPECT_EQ(ZKLAIM_UNEXPECTED_PREDICATE,
-                      zklaim_ctx_verify(received.get(), trusted_key, expected, 2));
+                      verify_with(received.get(), trusted_key, expected, 2));
         }
     }
     EXPECT_EQ(ZKLAIM_OK, verify());
@@ -148,13 +160,13 @@ TEST_F(zklaim_verifier, checks_every_reference_and_operation_in_every_payload) {
 
 TEST_F(zklaim_verifier, rejects_missing_extra_and_reordered_predicates) {
     EXPECT_EQ(ZKLAIM_UNEXPECTED_PREDICATE,
-              zklaim_ctx_verify(received.get(), trusted_key, policy, 1));
+              verify_with(received.get(), trusted_key, policy, 1));
     const zklaim_predicate extra[] = {policy[0], policy[1], policy[0]};
     EXPECT_EQ(ZKLAIM_UNEXPECTED_PREDICATE,
-              zklaim_ctx_verify(received.get(), trusted_key, extra, 3));
+              verify_with(received.get(), trusted_key, extra, 3));
     const zklaim_predicate reordered[] = {policy[1], policy[0]};
     EXPECT_EQ(ZKLAIM_UNEXPECTED_PREDICATE,
-              zklaim_ctx_verify(received.get(), trusted_key, reordered, 2));
+              verify_with(received.get(), trusted_key, reordered, 2));
 }
 
 TEST_F(zklaim_verifier, rejects_valid_proofs_for_weaker_prover_selected_predicates) {
@@ -162,10 +174,6 @@ TEST_F(zklaim_verifier, rejects_valid_proofs_for_weaker_prover_selected_predicat
     ctx_ptr prover(zklaim_context_new(), zklaim_ctx_free);
     ASSERT_NE(nullptr, prover);
     ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_deserialize(prover.get(), issued.data(), issued.size()));
-    prover->pk = static_cast<unsigned char *>(malloc(issuer->pk_size));
-    ASSERT_NE(nullptr, prover->pk);
-    prover->pk_size = issuer->pk_size;
-    memcpy(prover->pk, issuer->pk, issuer->pk_size);
 
     for (bool all_noop : {false, true}) {
         SCOPED_TRACE(all_noop);
@@ -185,14 +193,15 @@ TEST_F(zklaim_verifier, rejects_valid_proofs_for_weaker_prover_selected_predicat
             memcpy(node->pl.data_ref, weaker[i].data_ref, sizeof(node->pl.data_ref));
             memcpy(node->pl.data_op, weaker[i].data_op, sizeof(node->pl.data_op));
         }
-        ASSERT_EQ(ZKLAIM_OK, zklaim_proof_generate(prover.get()));
+        ASSERT_EQ(ZKLAIM_OK, zklaim_proof_generate(prover.get(), keys().pk, keys().pk_size,
+                                                   zklaim_test_nonce));
         auto blob = serialize(prover.get());
         received.reset(zklaim_context_new());
         ASSERT_NE(nullptr, received);
         ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_deserialize(received.get(), blob.data(), blob.size()));
         zklaim_clear_pres(received.get());
         // The proof and issuer signature are valid for the weaker statement.
-        ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_verify(received.get(), trusted_key, weaker, 2));
+        ASSERT_EQ(ZKLAIM_OK, verify_with(received.get(), trusted_key, weaker, 2));
         EXPECT_EQ(ZKLAIM_UNEXPECTED_PREDICATE, verify());
     }
 }
@@ -207,42 +216,91 @@ TEST_F(zklaim_verifier, still_checks_proof_after_issuer_and_policy_match) {
 }
 
 TEST_F(zklaim_verifier, rejects_missing_trust_inputs_and_invalid_operations) {
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(nullptr, trusted_key, policy, 2));
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(received.get(), nullptr, policy, 2));
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(received.get(), trusted_key, nullptr, 2));
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(received.get(), trusted_key, policy, 0));
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(received.get(), trusted_key, policy, SIZE_MAX));
+    const auto &k = keys();
+    EXPECT_EQ(ZKLAIM_ERROR, verify_with(nullptr, trusted_key, policy, 2));
+    EXPECT_EQ(ZKLAIM_ERROR, verify_with(received.get(), nullptr, policy, 2));
+    EXPECT_EQ(ZKLAIM_ERROR, verify_with(received.get(), trusted_key, nullptr, 2));
+    EXPECT_EQ(ZKLAIM_ERROR, verify_with(received.get(), trusted_key, policy, 0));
+    EXPECT_EQ(ZKLAIM_ERROR, verify_with(received.get(), trusted_key, policy, SIZE_MAX));
+    EXPECT_EQ(ZKLAIM_ERROR, verify_with(received.get(), trusted_key, policy, 2, nullptr));
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(received.get(), trusted_key, nullptr, k.vk_size,
+                                              policy, 2, zklaim_test_nonce));
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(received.get(), trusted_key, k.vk, 0,
+                                              policy, 2, zklaim_test_nonce));
     zklaim_ctx empty = {};
     memcpy(empty.pub_key, trusted_key, sizeof(trusted_key));
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(&empty, trusted_key, policy, 0));
+    EXPECT_EQ(ZKLAIM_ERROR, verify_with(&empty, trusted_key, policy, 0));
     zklaim_predicate invalid[2];
     memcpy(invalid, policy, sizeof(invalid));
     invalid[0].data_op[0] = static_cast<zklaim_op>(0);
     received->pl_ctx_head->pl.data_op[0] = invalid[0].data_op[0];
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(received.get(), trusted_key, invalid, 2));
+    EXPECT_EQ(ZKLAIM_ERROR, verify_with(received.get(), trusted_key, invalid, 2));
 }
 
 TEST_F(zklaim_verifier, rejects_inconsistent_context_storage) {
     zklaim_ctx view = *received;
     view.pl_ctx_head = nullptr;
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(&view, trusted_key, policy, 2));
-    view = *received;
-    view.vk = nullptr;
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(&view, trusted_key, policy, 2));
-    view = *received;
-    view.vk_size = SIZE_MAX;
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(&view, trusted_key, policy, 2));
+    EXPECT_EQ(ZKLAIM_ERROR, verify_with(&view, trusted_key, policy, 2));
     zklaim_wrap_payload_ctx head = *received->pl_ctx_head;
     head.next = nullptr;
     view = *received;
     view.pl_ctx_head = &head;
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(&view, trusted_key, policy, 2));
+    EXPECT_EQ(ZKLAIM_ERROR, verify_with(&view, trusted_key, policy, 2));
     zklaim_wrap_payload_ctx extra = *received->pl_ctx_head->next;
     extra.next = &extra; // Also reject cycles without traversing forever.
     head = *received->pl_ctx_head;
     head.next = &extra;
     view.pl_ctx_head = &head;
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_ctx_verify(&view, trusted_key, policy, 2));
+    EXPECT_EQ(ZKLAIM_ERROR, verify_with(&view, trusted_key, policy, 2));
+}
+
+TEST_F(zklaim_verifier, rejects_presentations_replayed_for_another_nonce) {
+    // A verifier that saw this presentation cannot reuse it for its own challenge.
+    unsigned char other[ZKLAIM_NONCE_SIZE];
+    for (size_t bit = 0; bit < 8 * ZKLAIM_NONCE_SIZE; bit += 37) {
+        SCOPED_TRACE(bit);
+        memcpy(other, zklaim_test_nonce, sizeof(other));
+        other[bit / 8] ^= static_cast<unsigned char>(0x80 >> (bit % 8));
+        EXPECT_EQ(ZKLAIM_INVALID_PROOF, verify_with(received.get(), trusted_key, policy, 2, other));
+    }
+    EXPECT_EQ(ZKLAIM_OK, verify());
+}
+
+TEST_F(zklaim_verifier, rejects_verification_keys_of_other_setups_and_payload_counts) {
+    zklaim_test_keys other;
+    ASSERT_EQ(ZKLAIM_OK, zklaim_trusted_setup(2, &other.pk, &other.pk_size, &other.vk, &other.vk_size));
+    EXPECT_EQ(ZKLAIM_INVALID_PROOF, zklaim_ctx_verify(received.get(), trusted_key, other.vk, other.vk_size,
+                                                      policy, 2, zklaim_test_nonce));
+    const auto &one = zklaim_keys_for(1);
+    ::testing::internal::CaptureStdout();
+    EXPECT_EQ(ZKLAIM_INVALID_PROOF, zklaim_ctx_verify(received.get(), trusted_key, one.vk, one.vk_size,
+                                                      policy, 2, zklaim_test_nonce));
+    EXPECT_EQ("", ::testing::internal::GetCapturedStdout());
+    EXPECT_EQ(ZKLAIM_OK, verify());
+}
+
+TEST_F(zklaim_verifier, one_setup_serves_every_credential_and_issuer_with_that_payload_count) {
+    verifier_test_key second_issuer, second_pub;
+    ASSERT_EQ(ZKLAIM_OK, zklaim_gen_pk(&second_issuer.value));
+    ASSERT_EQ(ZKLAIM_OK, zklaim_get_pub(second_issuer.value, &second_pub.value));
+    unsigned char *key = nullptr;
+    size_t key_size = 0;
+    ASSERT_EQ(ZKLAIM_OK, zklaim_pub2buf(second_pub.value, &key, &key_size));
+    std::unique_ptr<unsigned char, decltype(&free)> key_storage(key, free);
+    ASSERT_EQ(32u, key_size);
+
+    unsigned char nonce[ZKLAIM_NONCE_SIZE];
+    gcry_randomize(nonce, sizeof(nonce), GCRY_STRONG_RANDOM);
+    for (uint64_t age : {UINT64_C(18), UINT64_C(77)}) {
+        SCOPED_TRACE(age);
+        auto blob = present(second_issuer.value, key, age, nonce);
+        ASSERT_FALSE(blob.empty());
+        ctx_ptr other(zklaim_context_new(), zklaim_ctx_free);
+        ASSERT_NE(nullptr, other);
+        ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_deserialize(other.get(), blob.data(), blob.size()));
+        EXPECT_EQ(ZKLAIM_OK, verify_with(other.get(), key, policy, 2, nonce));
+        EXPECT_EQ(ZKLAIM_INVALID_PROOF, verify_with(other.get(), key, policy, 2));
+    }
 }
 
 } // namespace

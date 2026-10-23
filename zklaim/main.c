@@ -131,8 +131,14 @@ int worker() {
     //zklaim_add_pl(ctx, pl2);
     zklaim_hash_ctx(ctx);
 
-    printf("[ISSUER] performing trusted setup in order to generate keys\n");
-    printf("-> trusted setup result: %s\n", (zklaim_trusted_setup(ctx) ? "failed" : "passed"));
+    // The circuit depends only on the payload count: an issuer runs the setup
+    // once per supported count and reuses the keys for every credential.
+    // Provers receive the proving key; verifiers pin the verification key.
+    unsigned char *pk = NULL, *vk = NULL;
+    size_t pk_size = 0, vk_size = 0;
+    printf("[ISSUER] performing trusted setup for %zu-payload credentials\n", ctx->num_of_payloads);
+    printf("-> trusted setup result: %s\n",
+           (zklaim_trusted_setup(ctx->num_of_payloads, &pk, &pk_size, &vk, &vk_size) ? "failed" : "passed"));
 
     //unsigned char* buf;
     //size_t vksize = zklaim_verification_key_serialize(ctx, &buf);
@@ -192,23 +198,25 @@ int worker() {
 
     zklaim_print(ctx_prover);
 
-    int res = zklaim_ctx_verify(ctx_prover, trusted_issuer_key, &issued_predicate, 1);
+    // The verifier sends a fresh challenge with its predicate request, so a
+    // presentation it receives cannot be replayed to anyone else.
+    unsigned char nonce[ZKLAIM_NONCE_SIZE];
+    gcry_randomize(nonce, sizeof(nonce), GCRY_STRONG_RANDOM);
+
+    int res = zklaim_ctx_verify(ctx_prover, trusted_issuer_key, vk, vk_size, &issued_predicate, 1, nonce);
     printf("[PROVER] verification result: %d %s\n", res, (res ? "failed" : "passed"));
     printf("                              ^--- failure with code 3 (ZKLAIM_INVALID_PROOF) is ok for the prover, as signature passes, but (non-existing) proof fails\n\n");
 
     printf("[PROVER] applying the verifier's requested predicate\n");
     printf("[PROVER] generating proof\n");
 
-    ctx_prover->pk = (unsigned char*) calloc(1, ctx->pk_size);
-    ctx_prover->pk_size = ctx->pk_size;
-    memcpy(ctx_prover->pk, ctx->pk, ctx_prover->pk_size);
-
     memcpy(ctx_prover->pl_ctx_head->pl.data_ref, expected[0].data_ref, sizeof(expected[0].data_ref));
     memcpy(ctx_prover->pl_ctx_head->pl.data_op, expected[0].data_op, sizeof(expected[0].data_op));
 
     zklaim_print(ctx_prover);
 
-    printf("-> proof generation status: %s\n\n", (zklaim_proof_generate(ctx_prover) ? "failed" : "passed"));
+    printf("-> proof generation status: %s\n\n",
+           (zklaim_proof_generate(ctx_prover, pk, pk_size, nonce) ? "failed" : "passed"));
 
 
     printf("[PROVER] blinding attributes\n");
@@ -234,14 +242,16 @@ int worker() {
     printf("\n[VERIFIER] deserializing context\n");
     printf("-> deserialisation status: %s\n\n", zklaim_ctx_deserialize(ctx_verifier, ctx_prover_buf, len) ? "failed" : "passed");
     printf("[VERIFIER] verifying proof and context\n");
-    res = zklaim_ctx_verify(ctx_verifier, trusted_issuer_key, expected,
-                            sizeof(expected) / sizeof(expected[0]));
+    res = zklaim_ctx_verify(ctx_verifier, trusted_issuer_key, vk, vk_size, expected,
+                            sizeof(expected) / sizeof(expected[0]), nonce);
     printf("verification result: %d %s\n\n", res, (res ? "failed" : "passed"));
 
     zklaim_print(ctx_verifier);
 
     free(ctx_prover_buf);
     free(ctx_issuer);
+    free(pk);
+    free(vk);
     zklaim_ctx_free(ctx);
     gcry_sexp_release(priv);
     gcry_sexp_release(pub);

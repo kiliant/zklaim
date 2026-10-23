@@ -65,26 +65,27 @@ void zklaim_ctx_free(zklaim_ctx *ctx) {
         cur = next;
     }
 
-    free(ctx->pk);
-    free(ctx->vk);
     free(ctx->proof);
     free(ctx);
 }
 
-int zklaim_proof_generate(zklaim_ctx *ctx) {
-    int res = libsnark_prove(ctx);
+int zklaim_proof_generate(zklaim_ctx *ctx, const unsigned char *pk, size_t pk_size,
+                          const unsigned char nonce[ZKLAIM_NONCE_SIZE]) {
+    int res = libsnark_prove(ctx, pk, pk_size, nonce);
     return res;
 }
 
-int zklaim_proof_verify(zklaim_ctx *ctx) {
+int zklaim_proof_verify(zklaim_ctx *ctx, const unsigned char *vk, size_t vk_size,
+                        const unsigned char nonce[ZKLAIM_NONCE_SIZE]) {
     // check if proof is present
     if (ctx == NULL || ctx->proof == NULL)
         return ZKLAIM_ERROR;
-    return libsnark_verify(ctx);
+    return libsnark_verify(ctx, vk, vk_size, nonce);
 }
 
-int zklaim_trusted_setup(zklaim_ctx *ctx) {
-    return libsnark_trusted_setup(ctx);
+int zklaim_trusted_setup(size_t num_of_payloads, unsigned char **pk, size_t *pk_size,
+                         unsigned char **vk, size_t *vk_size) {
+    return libsnark_trusted_setup(num_of_payloads, pk, pk_size, vk, vk_size);
 }
 
 void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl) {
@@ -109,9 +110,9 @@ void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl) {
 }
 
 void zklaim_hash_pl(zklaim_payload *pl) {
-    gcry_randomize(&pl->salt, sizeof(pl->salt), GCRY_STRONG_RANDOM);
+    gcry_randomize(pl->salt, sizeof(pl->salt), GCRY_STRONG_RANDOM);
     // copy over salt to pre
-    zklaim_store_u64(pl->pre + 5 * sizeof(uint64_t), pl->salt);
+    memcpy(pl->pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t), pl->salt, sizeof(pl->salt));
     SHA256((unsigned char*) pl->pre, sizeof(pl->pre), pl->hash);
 }
 
@@ -152,14 +153,12 @@ void zklaim_print(zklaim_ctx *ctx){
     zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
     size_t counter = 0;
     uint64_t data[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
-    uint64_t salt;
     int i;
     while (cur != NULL) {
         // recover data
         for (uint8_t pos = 0; pos < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++pos) {
             zklaim_get_attr(&cur->pl, pos, &data[pos]);
         }
-        salt = zklaim_load_u64(cur->pl.pre + 40);
         printf("======================================================================\n");
         printf("=======          viewing information about payload #%zu          =======\n", counter);
         printf("======================================================================\n");
@@ -167,7 +166,9 @@ void zklaim_print(zklaim_ctx *ctx){
         if (cur->pl.priv != 1) {
             for (int i = 0; i < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; i++)
                 printf("data%i: [%"PRIu64"] %s %"PRIu64"\n", i, data[i], zklaim_parse_op(cur->pl.data_op[i]), cur->pl.data_ref[i]);
-            printf("payload salt: %"PRIu64"\n", salt);
+            printf("payload salt: ");
+            zklaim_print_hex(cur->pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t), ZKLAIM_SALT_SIZE);
+            printf("\n");
         } else {
             for (int i = 0; i < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; i++)
                 printf("data%i: [hidden] %s %"PRIu64"\n", i, zklaim_parse_op(cur->pl.data_op[i]), cur->pl.data_ref[i]);
@@ -204,7 +205,7 @@ void zklaim_clear_pres(zklaim_ctx *ctx) {
     zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
     while (cur != NULL) {
         memset(cur->pl.pre, 0, sizeof(cur->pl.pre));
-        memset(&cur->pl.salt, 0, sizeof(cur->pl.salt));
+        memset(cur->pl.salt, 0, sizeof(cur->pl.salt));
         cur->pl.priv = 1;
         cur = cur->next;
     }
@@ -213,39 +214,39 @@ void zklaim_clear_pres(zklaim_ctx *ctx) {
 static int plain_ctx(zklaim_ctx *ctx, unsigned char **buf, size_t *total_length) {
     *buf = NULL;
     *total_length = 0;
-    if (ctx->num_of_payloads > UINT32_MAX || ctx->vk_size > UINT32_MAX ||
-        ctx->vk_size > SIZE_MAX - 16 || (ctx->vk_size > 0 && ctx->vk == NULL) ||
-        ctx->num_of_payloads > (SIZE_MAX - 16 - ctx->vk_size) / 32) return ZKLAIM_ERROR;
-    const size_t len = 16 + ctx->num_of_payloads * 32 + ctx->vk_size;
+    if (ctx->num_of_payloads > UINT32_MAX ||
+        ctx->num_of_payloads > (SIZE_MAX - ZKLAIM_SIGNED_PREFIX_SIZE) / 32) return ZKLAIM_ERROR;
+    const size_t len = ZKLAIM_SIGNED_PREFIX_SIZE + ctx->num_of_payloads * 32;
     unsigned char *encoded = calloc(1, len);
     if (encoded == NULL) return ZKLAIM_ERROR;
-    // Domain, version, algorithm, curve and explicit lengths bind the signature
-    // to this protocol, without fixing the prover's selectable predicates.
+    // Domain, version, algorithm, curve and the payload count bind the signature
+    // to this protocol, without fixing the prover's selectable predicates or the
+    // verification key, which verifiers pin per issuer and payload count.
     memcpy(encoded, "ZKSG", 4);
     encoded[5] = ZKLAIM_WIRE_VERSION;
     encoded[6] = 1; // RFC 8032 Ed25519
     encoded[7] = zklaim_wire_curve();
     zklaim_store_u32(encoded + 8, (uint32_t) ctx->num_of_payloads);
-    zklaim_store_u32(encoded + 12, (uint32_t) ctx->vk_size);
     const zklaim_wrap_payload_ctx *node = ctx->pl_ctx_head;
     for (size_t i = 0; i < ctx->num_of_payloads; ++i) {
         if (node == NULL) { free(encoded); return ZKLAIM_ERROR; }
-        memcpy(encoded + 16 + i * 32, node->pl.hash, 32);
+        memcpy(encoded + ZKLAIM_SIGNED_PREFIX_SIZE + i * 32, node->pl.hash, 32);
         node = node->next;
     }
     if (node != NULL) { free(encoded); return ZKLAIM_ERROR; }
-    if (ctx->vk_size > 0) memcpy(encoded + 16 + ctx->num_of_payloads * 32, ctx->vk, ctx->vk_size);
     *buf = encoded;
     *total_length = len;
     return ZKLAIM_OK;
 }
 
 int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_issuer_key[32],
-                      const zklaim_predicate *expected, size_t expected_count) {
-    if (ctx == NULL || trusted_issuer_key == NULL || expected == NULL ||
+                      const unsigned char *trusted_vk, size_t trusted_vk_size,
+                      const zklaim_predicate *expected, size_t expected_count,
+                      const unsigned char nonce[ZKLAIM_NONCE_SIZE]) {
+    if (ctx == NULL || trusted_issuer_key == NULL || trusted_vk == NULL ||
+        trusted_vk_size == 0 || expected == NULL || nonce == NULL ||
         expected_count == 0 || expected_count > SIZE_MAX / sizeof(*expected) ||
-        (ctx->vk_size > 0 && ctx->vk == NULL) ||
-        ctx->num_of_payloads > (SIZE_MAX - ctx->vk_size) / sizeof(((zklaim_payload*)0)->hash)) {
+        ctx->num_of_payloads > (SIZE_MAX - ZKLAIM_SIGNED_PREFIX_SIZE) / sizeof(((zklaim_payload*)0)->hash)) {
         return ZKLAIM_ERROR;
     }
 
@@ -326,7 +327,7 @@ int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_issuer_key[32
     }
 
     // verify libsnark proof if present
-    if (zklaim_proof_verify(ctx)) {
+    if (zklaim_proof_verify(ctx, trusted_vk, trusted_vk_size, nonce)) {
         free(buf);
         gcry_sexp_release(pub);
         gcry_sexp_release(sig);
@@ -381,25 +382,21 @@ static int valid_wire_op(unsigned char op) {
 int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len) {
     if (ctx == NULL || buf == NULL || len < ZKLAIM_WIRE_HEADER_SIZE ||
         ctx->num_of_payloads != 0 || ctx->pl_ctx_head != NULL ||
-        ctx->pk_size != 0 || ctx->pk != NULL || ctx->vk_size != 0 || ctx->vk != NULL ||
         ctx->proof_size != 0 || ctx->proof != NULL) return ZKLAIM_ERROR;
     // No struct casts: every field has a specified offset and byte order.
     if (memcmp(buf, "ZKLM", 4) != 0 || buf[4] != 0 || buf[5] != ZKLAIM_WIRE_VERSION ||
         (buf[6] != ZKLAIM_WIRE_CREDENTIAL && buf[6] != ZKLAIM_WIRE_PRESENTATION) ||
-        buf[7] != zklaim_wire_curve() || zklaim_load_u32(buf + 20) != 0) return ZKLAIM_ERROR;
+        buf[7] != zklaim_wire_curve() || zklaim_load_u64(buf + 16) != 0) return ZKLAIM_ERROR;
     unsigned char digest[SHA256_DIGEST_LENGTH];
     SHA256(buf, 56, digest);
     if (memcmp(digest, buf + 56, sizeof(digest)) != 0) return ZKLAIM_ERROR;
     const int credential = buf[6] == ZKLAIM_WIRE_CREDENTIAL;
     const size_t payload_size = credential ? ZKLAIM_WIRE_CREDENTIAL_PAYLOAD_SIZE : ZKLAIM_WIRE_PUBLIC_PAYLOAD_SIZE;
     const size_t count = zklaim_load_u32(buf + 8);
-    const size_t vk_size = zklaim_load_u32(buf + 12);
-    const size_t proof_size = zklaim_load_u32(buf + 16);
+    const size_t proof_size = zklaim_load_u32(buf + 12);
     size_t remaining = len - ZKLAIM_WIRE_HEADER_SIZE;
     if (count > remaining / payload_size) return ZKLAIM_ERROR;
     remaining -= count * payload_size;
-    if (vk_size > remaining) return ZKLAIM_ERROR;
-    remaining -= vk_size;
     if (sizeof(ctx->signature) > remaining) return ZKLAIM_ERROR;
     remaining -= sizeof(ctx->signature);
     if (proof_size != remaining) return ZKLAIM_ERROR;
@@ -424,21 +421,14 @@ int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len) {
             if (cursor[77] > 1) goto failure;
             node->pl.priv = cursor[77];
             if (node->pl.priv == 1) {
-                for (size_t j = 0; j < 48; ++j) if (cursor[78 + j] != 0) goto failure;
+                for (size_t j = 0; j < ZKLAIM_PRE_SIZE; ++j) if (cursor[78 + j] != 0) goto failure;
             } else {
-                memcpy(node->pl.pre, cursor + 78, 48);
-                node->pl.salt = zklaim_load_u64(node->pl.pre + 40);
+                memcpy(node->pl.pre, cursor + 78, ZKLAIM_PRE_SIZE);
+                memcpy(node->pl.salt, node->pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * 8, ZKLAIM_SALT_SIZE);
             }
         }
     }
     parsed->num_of_payloads = count;
-    if (vk_size > 0) {
-        parsed->vk = malloc(vk_size);
-        if (parsed->vk == NULL) goto failure;
-        memcpy(parsed->vk, cursor, vk_size);
-    }
-    parsed->vk_size = vk_size;
-    cursor += vk_size;
     memcpy(parsed->signature, cursor, sizeof(parsed->signature));
     cursor += sizeof(parsed->signature);
     if (proof_size > 0) {
@@ -459,13 +449,10 @@ failure:
 static size_t serialize_context(zklaim_ctx *ctx, unsigned char **buf, int credential) {
     if (buf == NULL) return 0;
     *buf = NULL;
-    if (ctx == NULL || ctx->num_of_payloads > UINT32_MAX || ctx->vk_size > UINT32_MAX ||
-        ctx->proof_size > UINT32_MAX || (ctx->vk_size > 0 && ctx->vk == NULL) ||
-        (ctx->proof_size > 0 && ctx->proof == NULL)) return 0;
+    if (ctx == NULL || ctx->num_of_payloads > UINT32_MAX ||
+        ctx->proof_size > UINT32_MAX || (ctx->proof_size > 0 && ctx->proof == NULL)) return 0;
     const size_t payload_size = credential ? ZKLAIM_WIRE_CREDENTIAL_PAYLOAD_SIZE : ZKLAIM_WIRE_PUBLIC_PAYLOAD_SIZE;
     size_t total = ZKLAIM_WIRE_HEADER_SIZE + sizeof(ctx->signature);
-    if (ctx->vk_size > SIZE_MAX - total) return 0;
-    total += ctx->vk_size;
     if (ctx->proof_size > SIZE_MAX - total) return 0;
     total += ctx->proof_size;
     if (ctx->num_of_payloads > (SIZE_MAX - total) / payload_size) return 0;
@@ -483,8 +470,7 @@ static size_t serialize_context(zklaim_ctx *ctx, unsigned char **buf, int creden
     encoded[6] = credential ? ZKLAIM_WIRE_CREDENTIAL : ZKLAIM_WIRE_PRESENTATION;
     encoded[7] = zklaim_wire_curve();
     zklaim_store_u32(encoded + 8, (uint32_t) ctx->num_of_payloads);
-    zklaim_store_u32(encoded + 12, (uint32_t) ctx->vk_size);
-    zklaim_store_u32(encoded + 16, (uint32_t) ctx->proof_size);
+    zklaim_store_u32(encoded + 12, (uint32_t) ctx->proof_size);
     memcpy(encoded + 24, ctx->pub_key, 32);
     SHA256(encoded, 56, encoded + 56);
     unsigned char *cursor = encoded + ZKLAIM_WIRE_HEADER_SIZE;
@@ -501,13 +487,11 @@ static size_t serialize_context(zklaim_ctx *ctx, unsigned char **buf, int creden
         if (credential) {
             if (node->pl.priv > 1) goto failure;
             cursor[77] = node->pl.priv;
-            if (node->pl.priv == 0) memcpy(cursor + 78, node->pl.pre, 48);
+            if (node->pl.priv == 0) memcpy(cursor + 78, node->pl.pre, ZKLAIM_PRE_SIZE);
         }
         node = node->next;
     }
     if (node != NULL) goto failure;
-    if (ctx->vk_size > 0) memcpy(cursor, ctx->vk, ctx->vk_size);
-    cursor += ctx->vk_size;
     memcpy(cursor, ctx->signature, sizeof(ctx->signature));
     cursor += sizeof(ctx->signature);
     if (ctx->proof_size > 0) memcpy(cursor, ctx->proof, ctx->proof_size);

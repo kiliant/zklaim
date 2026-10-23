@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <sstream>
 #include <cerrno>
+#include <map>
 #include <memory>
 #include <fcntl.h>
 #include <sys/resource.h>
@@ -8,6 +9,33 @@
 extern "C" {
 #include <zklaim/zklaim.h>
 }
+
+struct zklaim_test_keys {
+    unsigned char *pk = nullptr;
+    unsigned char *vk = nullptr;
+    size_t pk_size = 0;
+    size_t vk_size = 0;
+    ~zklaim_test_keys() { free(pk); free(vk); }
+};
+
+// One trusted setup per payload count serves every credential with that count.
+static const zklaim_test_keys &zklaim_keys_for(size_t payloads) {
+    static std::map<size_t, std::unique_ptr<zklaim_test_keys> > cache;
+    auto &keys = cache[payloads];
+    if (!keys) {
+        keys.reset(new zklaim_test_keys);
+        if (zklaim_trusted_setup(payloads, &keys->pk, &keys->pk_size,
+                                 &keys->vk, &keys->vk_size) != ZKLAIM_OK) {
+            ADD_FAILURE() << "trusted setup failed for " << payloads << " payloads";
+        }
+    }
+    return *keys;
+}
+
+static const unsigned char zklaim_test_nonce[ZKLAIM_NONCE_SIZE] = {
+    0x6e, 0x6f, 0x6e, 0x63, 0x65, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11,
+    12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 0xff
+};
 
 TEST(zklaim, can_create_ctx) {
     zklaim_ctx *ctx = zklaim_context_new();
@@ -38,16 +66,23 @@ TEST(zklaim, snark_calls_preserve_stdout_and_file_descriptors) {
         if (fd >= 0) close(fd);
     };
 
-    EXPECT_EQ(ZKLAIM_OK, zklaim_trusted_setup(ctx.get()));
+    zklaim_test_keys keys;
+    EXPECT_EQ(ZKLAIM_OK, zklaim_trusted_setup(1, &keys.pk, &keys.pk_size, &keys.vk, &keys.vk_size));
     expect_stdout_intact();
-    EXPECT_EQ(ZKLAIM_OK, zklaim_proof_generate(ctx.get()));
+    EXPECT_EQ(ZKLAIM_OK, zklaim_proof_generate(ctx.get(), keys.pk, keys.pk_size, zklaim_test_nonce));
     expect_stdout_intact();
     for (int i = 0; i < 5; ++i) {
-        EXPECT_EQ(ZKLAIM_OK, zklaim_proof_verify(ctx.get()));
+        EXPECT_EQ(ZKLAIM_OK, zklaim_proof_verify(ctx.get(), keys.vk, keys.vk_size, zklaim_test_nonce));
         expect_stdout_intact();
     }
+    // libsnark prints a warning for a verification key of another payload count.
+    const auto &two = zklaim_keys_for(2);
+    ::testing::internal::CaptureStdout();
+    EXPECT_NE(ZKLAIM_OK, zklaim_proof_verify(ctx.get(), two.vk, two.vk_size, zklaim_test_nonce));
+    EXPECT_EQ("", ::testing::internal::GetCapturedStdout());
+    expect_stdout_intact();
     ctx->pl_ctx_head->pl.data_ref[0] = 43;
-    EXPECT_EQ(ZKLAIM_ERROR, zklaim_proof_generate(ctx.get()));
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_proof_generate(ctx.get(), keys.pk, keys.pk_size, zklaim_test_nonce));
     expect_stdout_intact();
 
     ::testing::internal::CaptureStdout();
@@ -86,11 +121,7 @@ TEST(zklaim, frees_context_storage_with_zero_metadata) {
     zklaim_add_pl(ctx, pl);
     ctx->num_of_payloads = 0;
     // Allocations can be non-null even when their serialized size is zero.
-    ctx->pk = static_cast<unsigned char *>(malloc(1));
-    ctx->vk = static_cast<unsigned char *>(malloc(1));
     ctx->proof = static_cast<unsigned char *>(malloc(1));
-    ASSERT_NE(nullptr, ctx->pk);
-    ASSERT_NE(nullptr, ctx->vk);
     ASSERT_NE(nullptr, ctx->proof);
     zklaim_ctx_free(ctx);
 }
@@ -114,7 +145,7 @@ TEST(zklaim, rejects_invalid_attribute_positions) {
 TEST(zklaim, can_set_all_attribute_slots) {
     zklaim_payload pl = {};
     memset(pl.pre, 0xa5, sizeof(pl.pre));
-    pl.salt = UINT64_C(0x123456789abcdef0);
+    memset(pl.salt, 0x5a, sizeof(pl.salt));
     const uint64_t values[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES] = {
         0, 1, UINT64_C(0x0123456789abcdef),
         UINT64_C(0x8000000000000000), UINT64_MAX
@@ -133,10 +164,9 @@ TEST(zklaim, can_set_all_attribute_slots) {
         SCOPED_TRACE(pos);
         EXPECT_EQ(values[pos], actual[pos]);
     }
-    uint64_t salt_slot;
-    memcpy(&salt_slot, pl.pre + sizeof(actual), sizeof(salt_slot));
-    EXPECT_EQ(UINT64_C(0xa5a5a5a5a5a5a5a5), salt_slot);
-    EXPECT_EQ(UINT64_C(0x123456789abcdef0), pl.salt);
+    static_assert(sizeof(actual) + ZKLAIM_SALT_SIZE == sizeof(pl.pre), "salt follows the attributes");
+    for (size_t i = sizeof(actual); i < sizeof(pl.pre); ++i) EXPECT_EQ(0xa5, pl.pre[i]);
+    for (unsigned char byte : pl.salt) EXPECT_EQ(0x5a, byte);
 }
 
 TEST(zklaimDeathTest, hashes_payload_when_file_descriptors_are_exhausted) {
@@ -151,10 +181,12 @@ TEST(zklaimDeathTest, hashes_payload_when_file_descriptors_are_exhausted) {
         if (open("/dev/urandom", O_RDONLY) != -1 || errno != EMFILE) _exit(3);
 
         zklaim_payload pl = {};
-        pl.salt = UINT64_C(0x123456789abcdef0);
+        unsigned char previous[ZKLAIM_SALT_SIZE];
+        memset(previous, 0x5a, sizeof(previous));
+        memcpy(pl.salt, previous, sizeof(pl.salt));
         zklaim_hash_pl(&pl);
-        if (pl.salt == UINT64_C(0x123456789abcdef0)) _exit(4);
-        if (zklaim_load_u64(pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t)) != pl.salt) _exit(5);
+        if (memcmp(pl.salt, previous, sizeof(previous)) == 0) _exit(4);
+        if (memcmp(pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t), pl.salt, sizeof(pl.salt)) != 0) _exit(5);
         _exit(0);
     }, ::testing::ExitedWithCode(0), "");
 }
@@ -164,13 +196,19 @@ TEST(zklaim, payload_hash_includes_fresh_salt) {
     memset(pl.pre, 0xa5, sizeof(pl.pre));
     zklaim_hash_pl(&pl);
 
-    EXPECT_EQ(pl.salt, zklaim_load_u64(pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t)));
+    // 40 attribute bytes and a 15-byte salt: the largest message SHA-256 pads into one block.
+    ASSERT_EQ(55u, sizeof(pl.pre));
+    EXPECT_EQ(0, memcmp(pl.salt, pl.pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t), sizeof(pl.salt)));
     unsigned char expected[32];
     SHA256(pl.pre, sizeof(pl.pre), expected);
     EXPECT_EQ(0, memcmp(expected, pl.hash, sizeof(expected)));
     for (size_t i = 0; i < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t); ++i) {
         EXPECT_EQ(0xa5, pl.pre[i]);
     }
+    zklaim_payload again = pl;
+    zklaim_hash_pl(&again);
+    EXPECT_NE(0, memcmp(pl.salt, again.salt, sizeof(pl.salt)));
+    EXPECT_NE(0, memcmp(pl.hash, again.hash, sizeof(pl.hash)));
 }
 
 TEST(zklaim, can_create_and_add_pl) {
@@ -216,14 +254,35 @@ TEST(zklaim, can_do_ts) {
 
     zklaim_hash_ctx(ctx);
 
-    ASSERT_FALSE(zklaim_trusted_setup(ctx));
+    const auto &keys = zklaim_keys_for(ctx->num_of_payloads);
+    ASSERT_NE(nullptr, keys.pk);
+    ASSERT_NE(nullptr, keys.vk);
+    EXPECT_GT(keys.pk_size, 0u);
+    EXPECT_GT(keys.vk_size, 0u);
+    zklaim_ctx_free(ctx);
+}
+
+TEST(zklaim, trusted_setup_rejects_invalid_arguments_without_output) {
+    unsigned char marker = 0;
+    unsigned char *pk = &marker, *vk = &marker;
+    size_t pk_size = 1, vk_size = 1;
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_trusted_setup(0, &pk, &pk_size, &vk, &vk_size));
+    EXPECT_EQ(nullptr, pk);
+    EXPECT_EQ(nullptr, vk);
+    EXPECT_EQ(0u, pk_size);
+    EXPECT_EQ(0u, vk_size);
+#if SIZE_MAX > UINT32_MAX
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_trusted_setup(static_cast<size_t>(UINT32_MAX) + 1,
+                                                 &pk, &pk_size, &vk, &vk_size));
+#endif
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_trusted_setup(1, nullptr, &pk_size, &vk, &vk_size));
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_trusted_setup(1, &pk, nullptr, &vk, &vk_size));
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_trusted_setup(1, &pk, &pk_size, nullptr, &vk_size));
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_trusted_setup(1, &pk, &pk_size, &vk, nullptr));
 }
 
 static int context_sign_failure_result(gcry_sexp_t key) {
     zklaim_ctx ctx = {};
-    unsigned char verification_key[] = {1, 2, 3, 4};
-    ctx.vk = verification_key;
-    ctx.vk_size = sizeof(verification_key);
     memset(ctx.signature, 0xa5, sizeof(ctx.signature));
     unsigned char original[sizeof(ctx.signature)];
     memcpy(original, ctx.signature, sizeof(original));
@@ -283,7 +342,6 @@ TEST(zklaim, can_sign) {
 
     zklaim_hash_ctx(ctx);
 
-    ASSERT_FALSE(zklaim_trusted_setup(ctx));
     ASSERT_FALSE(zklaim_ctx_sign(ctx, priv));
 }
 
@@ -362,12 +420,6 @@ TEST(zklaim, can_detect_invalid_signature) {
     zklaim_ctx* ctx_prover = zklaim_context_new();
     ASSERT_FALSE(zklaim_ctx_deserialize(ctx_prover, ctx_issuer, len));
 
-    //ctx_prover->pk = ctx->pk;
-
-    ctx_prover->pk = (unsigned char*) calloc(1, ctx->pk_size);
-    ctx_prover->pk_size = ctx->pk_size;
-    memcpy(ctx_prover->pk, ctx->pk, ctx_prover->pk_size);
-
     zklaim_set_attr(&ctx_prover->pl_ctx_head->pl, 19, 0);
     zklaim_hash_ctx(ctx_prover);
 
@@ -380,8 +432,10 @@ TEST(zklaim, can_detect_invalid_signature) {
 
     ASSERT_FALSE(zklaim_ctx_deserialize(ctx_verifier, ctx_prover_buf, len));
 
+    const auto &keys = zklaim_keys_for(2);
     ASSERT_EQ(ZKLAIM_INVALID_SIGNATURE,
-              zklaim_ctx_verify(ctx_verifier, pubbuf, expected, 2));
+              zklaim_ctx_verify(ctx_verifier, pubbuf, keys.vk, keys.vk_size, expected, 2,
+                                zklaim_test_nonce));
     free(pubbuf);
 }
 
@@ -428,9 +482,10 @@ TEST(zklaim, can_verify) {
 
     memcpy(ctx->pub_key, pubbuf, sizeof(ctx->pub_key));
 
-    ASSERT_FALSE(zklaim_trusted_setup(ctx));
+    const auto &keys = zklaim_keys_for(1);
     ASSERT_FALSE(zklaim_ctx_sign(ctx, priv));
-    ASSERT_EQ(ZKLAIM_INVALID_PROOF, zklaim_ctx_verify(ctx, pubbuf, &expected, 1));
+    ASSERT_EQ(ZKLAIM_INVALID_PROOF, zklaim_ctx_verify(ctx, pubbuf, keys.vk, keys.vk_size,
+                                                      &expected, 1, zklaim_test_nonce));
     free(pubbuf);
 }
 
@@ -467,9 +522,10 @@ TEST(zklaim, can_proof) {
 
     zklaim_hash_ctx(ctx);
 
-    ASSERT_FALSE(zklaim_trusted_setup(ctx));
+    const auto &keys = zklaim_keys_for(ctx->num_of_payloads);
     ASSERT_FALSE(zklaim_ctx_sign(ctx, priv));
-    ASSERT_FALSE(zklaim_proof_generate(ctx));
+    ASSERT_FALSE(zklaim_proof_generate(ctx, keys.pk, keys.pk_size, zklaim_test_nonce));
+    ASSERT_FALSE(zklaim_proof_verify(ctx, keys.vk, keys.vk_size, zklaim_test_nonce));
 }
 
 TEST(zklaim, can_handle_two_payloads) {
@@ -506,9 +562,10 @@ TEST(zklaim, can_handle_two_payloads) {
 
     zklaim_hash_ctx(ctx);
 
-    ASSERT_FALSE(zklaim_trusted_setup(ctx));
+    const auto &keys = zklaim_keys_for(ctx->num_of_payloads);
     ASSERT_FALSE(zklaim_ctx_sign(ctx, priv));
-    ASSERT_FALSE(zklaim_proof_generate(ctx));
+    ASSERT_FALSE(zklaim_proof_generate(ctx, keys.pk, keys.pk_size, zklaim_test_nonce));
+    ASSERT_FALSE(zklaim_proof_verify(ctx, keys.vk, keys.vk_size, zklaim_test_nonce));
 
 }
 
@@ -547,45 +604,82 @@ TEST(zklaim, can_handle_three_payloads) {
 
     zklaim_hash_ctx(ctx);
 
-    ASSERT_FALSE(zklaim_trusted_setup(ctx));
+    const auto &keys = zklaim_keys_for(ctx->num_of_payloads);
     ASSERT_FALSE(zklaim_ctx_sign(ctx, priv));
-    ASSERT_FALSE(zklaim_proof_generate(ctx));
+    ASSERT_FALSE(zklaim_proof_generate(ctx, keys.pk, keys.pk_size, zklaim_test_nonce));
+    ASSERT_FALSE(zklaim_proof_verify(ctx, keys.vk, keys.vk_size, zklaim_test_nonce));
 
 }
 
 TEST(zklaim, rejects_contexts_without_payloads) {
-    int (*operations[])(zklaim_ctx *) = {
-        zklaim_trusted_setup, libsnark_trusted_setup,
-        zklaim_proof_generate, libsnark_prove
+    int (*operations[])(zklaim_ctx *, const unsigned char *, size_t, const unsigned char *) = {
+        zklaim_proof_generate, libsnark_prove, zklaim_proof_verify, libsnark_verify
     };
+    const auto &keys = zklaim_keys_for(1);
     zklaim_wrap_payload_ctx payload = {};
     unsigned char existing[] = {1, 2, 3};
     zklaim_ctx ctx = {};
-    ctx.pk = ctx.vk = ctx.proof = existing;
-    ctx.pk_size = ctx.vk_size = ctx.proof_size = sizeof(existing);
+    ctx.proof = existing;
+    ctx.proof_size = sizeof(existing);
 
-    // Neither a count without a list nor a list without a count is provable.
-    for (int state = 0; state < 3; ++state) {
+    // Neither a count without a list nor a list without a count is provable,
+    // and a list must not be longer or shorter than its count.
+    zklaim_wrap_payload_ctx second = {};
+    for (int state = 0; state < 5; ++state) {
         SCOPED_TRACE(state);
-        ctx.num_of_payloads = state == 1 ? 1 : 0;
-        ctx.pl_ctx_head = state == 2 ? &payload : nullptr;
+        ctx.num_of_payloads = state == 1 || state == 3 ? 1 : state == 4 ? 2 : 0;
+        ctx.pl_ctx_head = state >= 2 ? &payload : nullptr;
+        payload.next = state == 3 ? &second : nullptr;
         unsigned char original[sizeof(ctx)];
         memcpy(original, &ctx, sizeof(ctx));
-        for (auto operation : operations) {
-            EXPECT_EQ(ZKLAIM_ERROR, operation(&ctx));
+        for (size_t i = 0; i < 4; ++i) {
+            const unsigned char *key = i < 2 ? keys.pk : keys.vk;
+            const size_t key_size = i < 2 ? keys.pk_size : keys.vk_size;
+            EXPECT_EQ(ZKLAIM_ERROR, operations[i](&ctx, key, key_size, zklaim_test_nonce));
             EXPECT_EQ(0, memcmp(original, &ctx, sizeof(ctx)));
         }
     }
 }
 
-TEST(zklaimDeathTest, setup_and_proving_reject_null_contexts) {
-    ASSERT_EXIT({
-        if (zklaim_trusted_setup(NULL) != ZKLAIM_ERROR ||
-            libsnark_trusted_setup(NULL) != ZKLAIM_ERROR ||
-            zklaim_proof_generate(NULL) != ZKLAIM_ERROR ||
-            libsnark_prove(NULL) != ZKLAIM_ERROR) _exit(1);
-        _exit(0);
-    }, ::testing::ExitedWithCode(0), "");
+TEST(zklaim, proving_rejects_keys_for_other_circuits_without_changing_context) {
+    std::unique_ptr<zklaim_ctx, decltype(&zklaim_ctx_free)> ctx(
+        zklaim_context_new(), zklaim_ctx_free);
+    ASSERT_NE(nullptr, ctx);
+    zklaim_payload pl = {};
+    for (auto &op : pl.data_op) op = zklaim_noop;
+    zklaim_add_pl(ctx.get(), pl);
+    zklaim_add_pl(ctx.get(), pl);
+    zklaim_hash_ctx(ctx.get());
+    const auto &one = zklaim_keys_for(1);
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_proof_generate(ctx.get(), one.pk, one.pk_size, zklaim_test_nonce));
+    EXPECT_EQ(nullptr, ctx->proof);
+    EXPECT_EQ(0u, ctx->proof_size);
+}
+
+static int null_argument_result() {
+    zklaim_ctx ctx = {};
+    zklaim_wrap_payload_ctx payload = {};
+    ctx.pl_ctx_head = &payload;
+    ctx.num_of_payloads = 1;
+    unsigned char key = 0;
+    unsigned char *pk = nullptr;
+    unsigned char *vk = nullptr;
+    size_t pk_size = 0;
+    size_t vk_size = 0;
+    if (zklaim_trusted_setup(1, NULL, NULL, NULL, NULL) != ZKLAIM_ERROR ||
+        libsnark_trusted_setup(0, &pk, &pk_size, &vk, &vk_size) != ZKLAIM_ERROR ||
+        zklaim_proof_generate(NULL, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
+        zklaim_proof_generate(&ctx, NULL, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
+        zklaim_proof_generate(&ctx, &key, 1, NULL) != ZKLAIM_ERROR ||
+        libsnark_prove(NULL, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
+        zklaim_proof_verify(&ctx, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
+        libsnark_verify(&ctx, NULL, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
+        libsnark_verify(&ctx, &key, 1, NULL) != ZKLAIM_ERROR) return 1;
+    return 0;
+}
+
+TEST(zklaimDeathTest, setup_and_proving_reject_null_arguments) {
+    ASSERT_EXIT(_exit(null_argument_result()), ::testing::ExitedWithCode(0), "");
 }
 
 TEST(DISABLED_zklaim, can_handle_mismatching_payloads) {
@@ -627,10 +721,10 @@ static bool zklaim_test_circuit_accepts(uint64_t ref, enum zklaim_test_forgery f
     zklaim_hash_ctx(ctx);
 
     protoboard<FieldT> pb;
-    zklaim_gadget<FieldT> g(pb, ctx);
+    zklaim_gadget<FieldT> g(pb, ctx->num_of_payloads);
     g.generate_r1cs_constraints();
 
-    g.generate_r1cs_witness(ctx);
+    g.generate_r1cs_witness(ctx, zklaim_test_nonce);
 
     switch (forgery) {
         case forge_value:
@@ -683,20 +777,34 @@ TEST(zklaim, witness_generation_does_not_print_private_values) {
     zklaim_add_pl(ctx, pl);
     zklaim_hash_ctx(ctx);
     protoboard<FieldT> pb;
-    zklaim_gadget<FieldT> g(pb, ctx);
+    zklaim_gadget<FieldT> g(pb, ctx->num_of_payloads);
     g.generate_r1cs_constraints();
 
     // Use the gadget directly to exercise its witness diagnostics.
     ::testing::internal::CaptureStdout();
     ::testing::internal::CaptureStderr();
-    g.generate_r1cs_witness(ctx);
+    g.generate_r1cs_witness(ctx, zklaim_test_nonce);
     const std::string output = ::testing::internal::GetCapturedStdout();
     const std::string errors = ::testing::internal::GetCapturedStderr();
     EXPECT_TRUE(output.empty());
     EXPECT_TRUE(errors.empty());
     EXPECT_TRUE(pb.is_satisfied());
-    EXPECT_EQ(ctx->pl_ctx_head->pl.salt, pb.val(g.plvars[5]).as_ulong());
+    // Only the attributes are packed for comparisons; the salt is only hashed.
+    ASSERT_EQ(static_cast<size_t>(ZKLAIM_MAX_PAYLOAD_ATTRIBUTES), g.plvars.size());
+    EXPECT_EQ(FieldT(UINT64_C(0x123456789abcdef0) + 4, true), pb.val(g.plvars[4]));
     zklaim_ctx_free(ctx);
+}
+
+TEST(zklaim, circuit_size_depends_only_on_payload_count) {
+    typedef libff::Fr<default_r1cs_ppzksnark_pp> FieldT;
+    default_r1cs_ppzksnark_pp::init_public_params();
+    protoboard<FieldT> first, second;
+    zklaim_gadget<FieldT> a(first, 2), b(second, 2);
+    a.generate_r1cs_constraints();
+    b.generate_r1cs_constraints();
+    EXPECT_TRUE(first.get_constraint_system() == second.get_constraint_system());
+    // 2 x 1280 bits of hashes, references and operations plus a 256-bit nonce.
+    EXPECT_EQ((2 * 1280 + 256 + FieldT::capacity() - 1) / FieldT::capacity(), first.num_inputs());
 }
 
 TEST(DISABLED_zklaim, rejects_invalid_proof) {
@@ -734,14 +842,12 @@ TEST(zklaim, preimage_and_salt_get_cleared) {
 
     zklaim_clear_pres(ctx);
 
-    ASSERT_FALSE(ctx->pl_ctx_head->pl.salt);
+    for (unsigned char byte : ctx->pl_ctx_head->pl.salt) {
+        ASSERT_EQ(0, byte);
+    }
 
-    unsigned char *p = ctx->pl_ctx_head->pl.pre;
-
-    for(size_t i=0; i<sizeof(ctx->pl_ctx_head->pl.pre); i++) {
-        if (0 != (unsigned char) *p) {
-            ASSERT_FALSE(1);
-        }
+    for (unsigned char byte : ctx->pl_ctx_head->pl.pre) {
+        ASSERT_EQ(0, byte);
     }
 }
 
@@ -811,7 +917,8 @@ TEST(zklaim, three_party_run) {
 
     zklaim_hash_ctx(ctx);
 
-    ASSERT_FALSE(zklaim_trusted_setup(ctx));
+    // The issuer's setup for two-payload credentials, reused for every credential.
+    const auto &keys = zklaim_keys_for(2);
 
     ASSERT_FALSE(zklaim_ctx_sign(ctx, priv));
 
@@ -822,16 +929,11 @@ TEST(zklaim, three_party_run) {
     zklaim_ctx* ctx_prover = zklaim_context_new();
     ASSERT_FALSE(zklaim_ctx_deserialize(ctx_prover, ctx_issuer, len));
 
-    //ctx_prover->pk = ctx->pk;
-
-    ctx_prover->pk = (unsigned char*) calloc(1, ctx->pk_size);
-    ctx_prover->pk_size = ctx->pk_size;
-    memcpy(ctx_prover->pk, ctx->pk, ctx_prover->pk_size);
-
-    int res = zklaim_ctx_verify(ctx_prover, pubbuf, expected, 2);
+    int res = zklaim_ctx_verify(ctx_prover, pubbuf, keys.vk, keys.vk_size, expected, 2,
+                                zklaim_test_nonce);
     ASSERT_EQ(ZKLAIM_INVALID_PROOF, res);
 
-    ASSERT_FALSE(zklaim_proof_generate(ctx_prover));
+    ASSERT_FALSE(zklaim_proof_generate(ctx_prover, keys.pk, keys.pk_size, zklaim_test_nonce));
 
     zklaim_clear_pres(ctx_prover);
 
@@ -841,7 +943,8 @@ TEST(zklaim, three_party_run) {
     zklaim_ctx* ctx_verifier = zklaim_context_new();
 
     ASSERT_FALSE(zklaim_ctx_deserialize(ctx_verifier, ctx_prover_buf, len));
-    res = zklaim_ctx_verify(ctx_verifier, pubbuf, expected, 2);
+    res = zklaim_ctx_verify(ctx_verifier, pubbuf, keys.vk, keys.vk_size, expected, 2,
+                            zklaim_test_nonce);
     ASSERT_FALSE(res);
     free(pubbuf);
 }

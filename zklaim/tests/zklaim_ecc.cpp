@@ -481,20 +481,17 @@ TEST(zklaim_ecc, context_signature_matches_specified_domain_and_lengths) {
     gcry_sexp_t key = nullptr;
     ASSERT_EQ(0, zklaim_buf2pk(bytes.data(), bytes.size(), &key));
     zklaim_ctx ctx = {};
-    unsigned char vk[] = {'1', '2', '3'};
-    ctx.vk = vk;
-    ctx.vk_size = sizeof(vk);
     zklaim_wrap_payload_ctx payload = {};
     for (size_t i = 0; i < 32; ++i) payload.pl.hash[i] = static_cast<unsigned char>(i);
     ctx.pl_ctx_head = &payload;
     ctx.num_of_payloads = 1;
     ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_sign(&ctx, key));
     gcry_sexp_release(key);
+    // The verification key is pinned by verifiers and not part of the signature.
     std::vector<unsigned char> signed_bytes = {
-        'Z','K','S','G', 0,1, 1,zklaim_wire_curve(), 0,0,0,1, 0,0,0,3
+        'Z','K','S','G', 0,2, 1,zklaim_wire_curve(), 0,0,0,1
     };
     signed_bytes.insert(signed_bytes.end(), payload.pl.hash, payload.pl.hash + 32);
-    signed_bytes.insert(signed_bytes.end(), vk, vk + sizeof(vk));
     std::unique_ptr<EVP_PKEY, decltype(&EVP_PKEY_free)> openssl_key(
         EVP_PKEY_new_raw_public_key(EVP_PKEY_ED25519, nullptr, pub.data(), pub.size()), EVP_PKEY_free);
     std::unique_ptr<EVP_MD_CTX, decltype(&EVP_MD_CTX_free)> md(EVP_MD_CTX_new(), EVP_MD_CTX_free);

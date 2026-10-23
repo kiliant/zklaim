@@ -113,8 +113,12 @@ int worker(int k) {
     //zklaim_add_pl(ctx, pl2);
     zklaim_hash_ctx(ctx);
 
+    // Measures one setup per credential; issuers reuse it for every credential
+    // with the same payload count.
+    unsigned char *pk = NULL, *vk = NULL;
+    size_t pk_size = 0, vk_size = 0;
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t);
-    zklaim_trusted_setup(ctx);
+    zklaim_trusted_setup(ctx->num_of_payloads, &pk, &pk_size, &vk, &vk_size);
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t2);
 
     issuer_elapsed = (t2.tv_sec-t.tv_sec)*1000 + (t2.tv_nsec-t.tv_nsec)/1000/1000;
@@ -126,6 +130,8 @@ int worker(int k) {
     // payloads use the issuer's original predicates in this benchmark.
     zklaim_predicate *expected = calloc((size_t) k, sizeof(*expected));
     if (expected == NULL) {
+        free(pk);
+        free(vk);
         zklaim_ctx_free(ctx);
         gcry_sexp_release(priv);
         gcry_sexp_release(pub);
@@ -145,8 +151,11 @@ int worker(int k) {
     memcpy(ctx->pl_ctx_head->pl.data_ref, expected[0].data_ref, sizeof(expected[0].data_ref));
     memcpy(ctx->pl_ctx_head->pl.data_op, expected[0].data_op, sizeof(expected[0].data_op));
 
+    unsigned char nonce[ZKLAIM_NONCE_SIZE];
+    gcry_randomize(nonce, sizeof(nonce), GCRY_STRONG_RANDOM);
+
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t);
-    zklaim_proof_generate(ctx);
+    zklaim_proof_generate(ctx, pk, pk_size, nonce);
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t2);
 
     prover_elapsed = (t2.tv_sec-t.tv_sec)*1000 + (t2.tv_nsec-t.tv_nsec)/1000/1000;
@@ -154,7 +163,8 @@ int worker(int k) {
     zklaim_clear_pres(ctx);
 
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t);
-    const int verify_result = zklaim_ctx_verify(ctx, trusted_issuer_key, expected, (size_t) k);
+    const int verify_result = zklaim_ctx_verify(ctx, trusted_issuer_key, vk, vk_size,
+                                                expected, (size_t) k, nonce);
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t2);
 
     verifier_elapsed = (t2.tv_sec-t.tv_sec)*1000 + (t2.tv_nsec-t.tv_nsec)/1000/1000;
@@ -164,20 +174,22 @@ int worker(int k) {
     printf("prover: %zums\n", prover_elapsed);
     printf("verifier: %zums\n", verifier_elapsed);
     printf("proof: %zuB\n", ctx->proof_size);
-    printf("vk: %zuB\n", ctx->vk_size);
-    printf("pk: %zuB\n", ctx->pk_size);
+    printf("vk: %zuB\n", vk_size);
+    printf("pk: %zuB\n", pk_size);
 
     FILE *f;
     sem_wait(&file_sem);
     char buf[32];
     snprintf(buf, sizeof(buf), "results-%i.csv", getpid());
     f = fopen(buf, "a");
-    fprintf(f, "%lu,%d,%zu,%zu,%zu,%zu,%zu,%zu\n", (unsigned long)time(NULL), ctx->num_of_payloads, issuer_elapsed, prover_elapsed, verifier_elapsed, ctx->pk_size, ctx->vk_size, ctx->proof_size);
+    fprintf(f, "%lu,%d,%zu,%zu,%zu,%zu,%zu,%zu\n", (unsigned long)time(NULL), ctx->num_of_payloads, issuer_elapsed, prover_elapsed, verifier_elapsed, pk_size, vk_size, ctx->proof_size);
     fclose(f);
     sem_post(&file_sem);
 
     zklaim_ctx_free(ctx);
     free(expected);
+    free(pk);
+    free(vk);
     gcry_sexp_release(priv);
     gcry_sexp_release(pub);
 

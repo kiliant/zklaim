@@ -1,5 +1,5 @@
-// Cross-architecture protocol fixture. The RFC 8032 key below is public test
-// material and must never be used to issue real credentials.
+// Cross-architecture protocol fixture. The RFC 8032 key and nonce below are
+// public test material and must never be used to issue or request real credentials.
 #include <fstream>
 #include <iterator>
 #include <memory>
@@ -20,9 +20,28 @@ static const zklaim_predicate policy = {
      UINT64_C(0x8000000000000000), 42},
     {zklaim_eq, zklaim_eq, zklaim_eq, zklaim_eq, zklaim_eq}
 };
+// Every byte differs and the top and bottom bits are set, so byte-order or
+// bit-order mistakes in the public input change the statement.
+static const unsigned char test_nonce[ZKLAIM_NONCE_SIZE] = {
+    0x80,0x01,0xfe,0x7f,0x02,0xfd,0x40,0xbf,0x03,0xfc,0x20,0xdf,0x04,0xfb,0x10,0xef,
+    0x05,0xfa,0x08,0xf7,0x06,0xf9,0x55,0xaa,0x07,0xf8,0x33,0xcc,0x09,0xf6,0x0f,0xf1
+};
 
+static std::vector<unsigned char> read_file(const char *path) {
+    std::ifstream file(path, std::ios::binary);
+    if (!file) return {};
+    return std::vector<unsigned char>((std::istreambuf_iterator<char>(file)), {});
+}
+
+static bool write_file(const char *path, const unsigned char *data, size_t size) {
+    std::ofstream file(path, std::ios::binary);
+    file.write(reinterpret_cast<const char *>(data), size);
+    return file.good();
+}
+
+// usage: wire_portability issue|verify <presentation> <verification key>
 int main(int argc, char **argv) {
-    if (argc != 3) return 1;
+    if (argc != 4) return 1;
     gcry_check_version(GCRYPT_VERSION);
     std::unique_ptr<zklaim_ctx, decltype(&zklaim_ctx_free)> ctx(zklaim_context_new(), zklaim_ctx_free);
     if (!ctx) return 2;
@@ -36,24 +55,26 @@ int main(int argc, char **argv) {
         memcpy(ctx->pub_key, test_key, 32);
         zklaim_add_pl(ctx.get(), pl);
         zklaim_hash_ctx(ctx.get());
-        const int result = zklaim_trusted_setup(ctx.get()) || zklaim_ctx_sign(ctx.get(), priv) ||
-                           zklaim_proof_generate(ctx.get());
+        unsigned char *pk = nullptr, *vk = nullptr;
+        size_t pk_size = 0, vk_size = 0;
+        const int result = zklaim_trusted_setup(1, &pk, &pk_size, &vk, &vk_size) ||
+                           zklaim_ctx_sign(ctx.get(), priv) ||
+                           zklaim_proof_generate(ctx.get(), pk, pk_size, test_nonce);
+        std::unique_ptr<unsigned char, decltype(&free)> pk_storage(pk, free), vk_storage(vk, free);
         gcry_sexp_release(priv);
         if (result) return 4;
         unsigned char *data = nullptr;
         const size_t size = zklaim_ctx_serialize(ctx.get(), &data);
         std::unique_ptr<unsigned char, decltype(&free)> storage(data, free);
         if (size == 0) return 5;
-        std::ofstream file(argv[2], std::ios::binary);
-        file.write(reinterpret_cast<const char *>(data), size);
-        return file.good() ? 0 : 6;
+        return write_file(argv[2], data, size) && write_file(argv[3], vk, vk_size) ? 0 : 6;
     }
     if (strcmp(argv[1], "verify") == 0) {
-        std::ifstream file(argv[2], std::ios::binary);
-        if (!file) return 7;
-        std::vector<unsigned char> data((std::istreambuf_iterator<char>(file)), {});
+        auto data = read_file(argv[2]);
+        const auto vk = read_file(argv[3]);
+        if (data.empty() || vk.empty()) return 7;
         if (zklaim_ctx_deserialize(ctx.get(), data.data(), data.size()) ||
-            zklaim_ctx_verify(ctx.get(), test_key, &policy, 1)) return 8;
+            zklaim_ctx_verify(ctx.get(), test_key, vk.data(), vk.size(), &policy, 1, test_nonce)) return 8;
         unsigned char *encoded = nullptr;
         const size_t size = zklaim_ctx_serialize(ctx.get(), &encoded);
         std::unique_ptr<unsigned char, decltype(&free)> storage(encoded, free);
