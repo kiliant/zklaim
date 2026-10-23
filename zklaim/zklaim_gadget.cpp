@@ -27,7 +27,7 @@
 
 typedef std::vector<bool> bit_vector;
 
-bit_vector memtobv(unsigned char*, size_t);
+bit_vector memtobv(const unsigned char*, size_t);
 
 extern "C" {
 #include <zklaim/zklaim.h>
@@ -35,12 +35,12 @@ extern "C" {
 }
 
 const size_t sha256_digest_len = 256;
+const size_t zklaim_pre_bits = ZKLAIM_PRE_SIZE * 8;
+const size_t zklaim_nonce_bits = ZKLAIM_NONCE_SIZE * 8;
 
-/* this is needed as a 2-to-1-compression sha256-gadget is used, thus we pad our input to 512 */
-bool sha256_padding[128] = {1,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0,
-    0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,0, 0,0,0,0,0,0,0,1, 1,0,0,0,0,0,0,0};
+/* the pre-image and its SHA-256 padding (a one bit, zeros, and the 64-bit length)
+ * must fill exactly one block, as a single compression function gadget is used */
+static_assert(zklaim_pre_bits + 1 + 64 <= 512, "pre-image must fit one SHA-256 block");
 
 uint64_t extractFromBV(const libff::bit_vector &r, uint8_t slot_offset) {
     uint64_t var = 0;
@@ -106,7 +106,7 @@ using namespace std;
  *  this also has to be adapted for possibly changed inputs the verifier might have
  */
     template<typename FieldT>
-r1cs_primary_input<FieldT> zklaim_input_map(zklaim_ctx *ctx)
+r1cs_primary_input<FieldT> zklaim_input_map(zklaim_ctx *ctx, const unsigned char *nonce)
 {
     bit_vector input_as_bits, h, refs_vec, ops_vec;
     unsigned char refs[512] = {0};
@@ -137,6 +137,8 @@ r1cs_primary_input<FieldT> zklaim_input_map(zklaim_ctx *ctx)
         input_as_bits.insert(input_as_bits.end(), ops_vec.begin(), ops_vec.end());
         cur = cur->next;
     }
+    const bit_vector nonce_vec = memtobv(nonce, zklaim_nonce_bits);
+    input_as_bits.insert(input_as_bits.end(), nonce_vec.begin(), nonce_vec.end());
 
     vector<FieldT> input_as_field_elements = pack_bit_vector_into_field_element_vector<FieldT>(input_as_bits);
     return input_as_field_elements;
@@ -163,6 +165,7 @@ class zklaim_gadget : public gadget<FieldT> {
         vector<digest_variable<FieldT>*> r_vars; /* pre-images */
         vector<digest_variable<FieldT>*> ref_vals;
         vector<digest_variable<FieldT>*> ops_vals;
+        shared_ptr<digest_variable<FieldT> > nonce_var; /* verifier challenge */
 
         vector<block_variable<FieldT>*> h_r_blocks; /* 512 bit block that contains r1 + padding */
         vector<sha256_compression_function_gadget<FieldT>*> h_rs; /* hashing gadget for r1 */
@@ -187,7 +190,7 @@ class zklaim_gadget : public gadget<FieldT> {
 
         /* field's "zero", for reference */
         pb_variable<FieldT> zero;
-        pb_variable_array<FieldT> padding_var; /* SHA256 length padding */
+        pb_variable_array<FieldT> padding_var; /* SHA-256 padding of the pre-image */
 
 
         ~zklaim_gadget() {
@@ -338,16 +341,16 @@ class zklaim_gadget : public gadget<FieldT> {
 
         }
 
-        zklaim_gadget(protoboard<FieldT> &pb, zklaim_ctx *ctx)
+        // The circuit depends only on the payload count, so one trusted setup
+        // serves every credential with that count.
+        zklaim_gadget(protoboard<FieldT> &pb, size_t num_of_payloads)
             : gadget<FieldT>(pb, "zklaim_gadget")
         {
+            this->num_of_payloads = num_of_payloads;
 
-            zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
-
-            this->num_of_payloads = ctx->num_of_payloads;
-
-            // allocate space for the verifier input according to the num of payloads given
-            const size_t input_size_in_bits = sha256_digest_len * ctx->num_of_payloads * 5;
+            // allocate space for the verifier input according to the num of payloads given,
+            // followed by the verifier's nonce
+            const size_t input_size_in_bits = sha256_digest_len * num_of_payloads * 5 + zklaim_nonce_bits;
 
             const size_t input_size_in_field_elements = div_ceil(input_size_in_bits, FieldT::capacity());
             input_as_field_elements.allocate(pb, input_size_in_field_elements, "input_as_field_elements");
@@ -363,8 +366,7 @@ class zklaim_gadget : public gadget<FieldT> {
             // chosen to be the full size of the variables
             const size_t comp_b = 64;
 
-            cur = ctx->pl_ctx_head;
-            while (cur != NULL) {
+            for (size_t i = 0; i < num_of_payloads; i++) {
                 data0.push_back(new pb_variable<FieldT>());
                 data0.back()->allocate(this->pb, "test");
                 data0_less.push_back(new pb_variable<FieldT>());
@@ -399,29 +401,27 @@ class zklaim_gadget : public gadget<FieldT> {
                 data4_less.back()->allocate(this->pb, "test");
                 data4_less_or_eq.push_back(new pb_variable<FieldT>());
                 data4_less_or_eq.back()->allocate(this->pb, "test");
-
-                cur = cur->next;
             }
 
             // input variable assignment, for sanity check -> prover does not manipulate values
             // we get from the pre-image of the hash
-            plvars.allocate(this->pb, 6 * ctx->num_of_payloads, "input validation");
-            refvals.allocate(this->pb, 8 * ctx->num_of_payloads, "input validation");
-            opsvals.allocate(this->pb, 64 * ctx->num_of_payloads, "operation values");
+            plvars.allocate(this->pb, ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * num_of_payloads, "input validation");
+            refvals.allocate(this->pb, 8 * num_of_payloads, "input validation");
+            opsvals.allocate(this->pb, 64 * num_of_payloads, "operation values");
 
             // allocate and init comparison gadget
             // check: data1 >/>= data1_reference
 
-            // SHA256's length padding
-            for (size_t i = 0; i < 128; i++) {
-                if (sha256_padding[i])
-                    padding_var.emplace_back(ONE);
-                else
-                    padding_var.emplace_back(zero);
+            // SHA-256 padding: a one bit, zeros, and the big-endian 64-bit message length
+            const size_t padding_bits = 512 - zklaim_pre_bits;
+            for (size_t i = 0; i < padding_bits; i++) {
+                const size_t length_bit = padding_bits - 1 - i;
+                const bool bit = i == 0 || (length_bit < 64 && ((zklaim_pre_bits >> length_bit) & 1));
+                padding_var.emplace_back(bit ? ONE : zero);
             }
 
             // verifier (and prover) inputs:
-            for (size_t i = 0; i<ctx->num_of_payloads; i++) {
+            for (size_t i = 0; i<num_of_payloads; i++) {
                 h_vars.push_back(new digest_variable<FieldT>(this->pb, sha256_digest_len, "h"));
                 ref_vals.push_back(new digest_variable<FieldT>(this->pb, sha256_digest_len * 2, "h"));
                 ops_vals.push_back(new digest_variable<FieldT>(this->pb, sha256_digest_len * 2, "h"));
@@ -429,6 +429,9 @@ class zklaim_gadget : public gadget<FieldT> {
                 input_as_bits.insert(input_as_bits.end(), ref_vals.back()->bits.begin(), ref_vals.back()->bits.end());
                 input_as_bits.insert(input_as_bits.end(), ops_vals.back()->bits.begin(), ops_vals.back()->bits.end());
             }
+            // The packing below constrains the nonce bits, binding the proof to them.
+            nonce_var.reset(new digest_variable<FieldT>(this->pb, zklaim_nonce_bits, "nonce"));
+            input_as_bits.insert(input_as_bits.end(), nonce_var->bits.begin(), nonce_var->bits.end());
 
             // multipacking
             assert(input_as_bits.size() == input_size_in_bits);
@@ -439,18 +442,19 @@ class zklaim_gadget : public gadget<FieldT> {
                         FMT(this->annotation_prefix, "unpack_inputs")));
 
             // prover inputs:
-            for (size_t i = 0; i<ctx->num_of_payloads; i++) {
-                r_vars.push_back(new digest_variable<FieldT>(this->pb, sha256_digest_len + 2*64, "r"));
+            for (size_t i = 0; i<num_of_payloads; i++) {
+                r_vars.push_back(new digest_variable<FieldT>(this->pb, zklaim_pre_bits, "r"));
                 // SHA-256 consumes big-endian words; multipacking consumes
                 // least-significant bits first. Reverse each complete uint64.
-                for (size_t slot = 0; slot < 6; ++slot) {
+                // The salt is only hashed, so it is not packed.
+                for (size_t slot = 0; slot < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++slot) {
                     for (int bit = 63; bit >= 0; --bit) {
                         PL.emplace_back(r_vars.back()->bits[slot * 64 + bit]);
                     }
                 }
             }
 
-            for (size_t i=0; i<ctx->num_of_payloads; i++) {
+            for (size_t i=0; i<num_of_payloads; i++) {
                 for (size_t slot = 0; slot < 8; ++slot) {
                     for (int bit = 63; bit >= 0; --bit) {
                         REF.emplace_back(ref_vals[i]->bits[slot * 64 + bit]);
@@ -458,7 +462,7 @@ class zklaim_gadget : public gadget<FieldT> {
                 }
             }
 
-            for (size_t i=0; i<ctx->num_of_payloads; i++) {
+            for (size_t i=0; i<num_of_payloads; i++) {
                 for (int l = 0; l<64; l++) {
                     for (int k=7; k>=0; k--) {
                         OPS.insert(OPS.end(), ops_vals[i]->bits.begin()+k+l*8, ops_vals[i]->bits.begin()+k+1+l*8);
@@ -477,7 +481,7 @@ class zklaim_gadget : public gadget<FieldT> {
             // h_r_blocks
             // h_rs
             // initialize the block gadget for r1's hash
-            for (size_t i = 0; i < ctx->num_of_payloads; i++) {
+            for (size_t i = 0; i < num_of_payloads; i++) {
                 h_r_blocks.push_back(new block_variable<FieldT>(this->pb, {
                             r_vars[i]->bits,
                             padding_var
@@ -490,7 +494,7 @@ class zklaim_gadget : public gadget<FieldT> {
                             *h_vars[i],
                             "h_r1"));
             }
-            for (size_t i=0; i<ctx->num_of_payloads; i++) {
+            for (size_t i=0; i<num_of_payloads; i++) {
                 data0_cgs.push_back(new comparison_gadget<FieldT>(this->pb,
                             comp_b,
                             *data0[i],
@@ -683,11 +687,11 @@ class zklaim_gadget : public gadget<FieldT> {
 
                 // enforce that what we compare is also contained in the input at the
                 // right slot
-                this->pb.add_r1cs_constraint(r1cs_constraint<FieldT>(1, *data0[i] - plvars[0 + i*6], 0), "input validation #0");
-                this->pb.add_r1cs_constraint(r1cs_constraint<FieldT>(1, *data1[i] - plvars[1 + i*6], 0), "input validation #1");
-                this->pb.add_r1cs_constraint(r1cs_constraint<FieldT>(1, *data2[i] - plvars[2 + i*6], 0), "input validation #2");
-                this->pb.add_r1cs_constraint(r1cs_constraint<FieldT>(1, *data3[i] - plvars[3 + i*6], 0), "input validation #3");
-                this->pb.add_r1cs_constraint(r1cs_constraint<FieldT>(1, *data4[i] - plvars[4 + i*6], 0), "input validation #4");
+                this->pb.add_r1cs_constraint(r1cs_constraint<FieldT>(1, *data0[i] - plvars[0 + i*ZKLAIM_MAX_PAYLOAD_ATTRIBUTES], 0), "input validation #0");
+                this->pb.add_r1cs_constraint(r1cs_constraint<FieldT>(1, *data1[i] - plvars[1 + i*ZKLAIM_MAX_PAYLOAD_ATTRIBUTES], 0), "input validation #1");
+                this->pb.add_r1cs_constraint(r1cs_constraint<FieldT>(1, *data2[i] - plvars[2 + i*ZKLAIM_MAX_PAYLOAD_ATTRIBUTES], 0), "input validation #2");
+                this->pb.add_r1cs_constraint(r1cs_constraint<FieldT>(1, *data3[i] - plvars[3 + i*ZKLAIM_MAX_PAYLOAD_ATTRIBUTES], 0), "input validation #3");
+                this->pb.add_r1cs_constraint(r1cs_constraint<FieldT>(1, *data4[i] - plvars[4 + i*ZKLAIM_MAX_PAYLOAD_ATTRIBUTES], 0), "input validation #4");
 
                 /*add_cmp_constraint(data0_ops[i], *data0_less[i], *data0_less_or_eq[i]);
                   add_cmp_constraint(data1_ops[i], *data1_less[i], *data1_less_or_eq[i]);
@@ -704,7 +708,7 @@ class zklaim_gadget : public gadget<FieldT> {
          * generate witnesses for the constraint system of this gadget
          * need to provide assignment to necessary variables
          */
-        void generate_r1cs_witness(zklaim_ctx *ctx)
+        void generate_r1cs_witness(zklaim_ctx *ctx, const unsigned char *nonce)
         {
             // set pb zeoro to field zero
             this->pb.val(zero) = FieldT::zero();
@@ -736,7 +740,7 @@ class zklaim_gadget : public gadget<FieldT> {
 
                 refs_vec = memtobv(ref_in, 512);
                 ops_vec = memtobv(ops, 512);
-                r = memtobv(cur->pl.pre, 384);
+                r = memtobv(cur->pl.pre, zklaim_pre_bits);
                 r_vars[i]->bits.fill_with_bits(this->pb, r);
                 //data0_cgs[i]->generate_r1cs_witness();
                 //data1_cgs[i]->generate_r1cs_witness();
@@ -753,21 +757,22 @@ class zklaim_gadget : public gadget<FieldT> {
                 cur = cur->next;
             }
 
+            nonce_var->bits.fill_with_bits(this->pb, memtobv(nonce, zklaim_nonce_bits));
             unpack_inputs->generate_r1cs_witness_from_bits();
             pack_REF->generate_r1cs_witness_from_bits();
             pack_OPS->generate_r1cs_witness_from_bits();
 
             pack_PL->generate_r1cs_witness_from_bits();
 
-            for (size_t i=0; i<ctx->num_of_payloads; i++) {
+            for (size_t i=0; i<this->num_of_payloads; i++) {
                 // Take numeric values from the constrained packing instead of
                 // converting uint64_t to native long (which truncates on 32-bit
                 // machines and sign-extends values above INT64_MAX).
-                this->pb.val(*data0[i]) = this->pb.val(plvars[0 + i*6]);
-                this->pb.val(*data1[i]) = this->pb.val(plvars[1 + i*6]);
-                this->pb.val(*data2[i]) = this->pb.val(plvars[2 + i*6]);
-                this->pb.val(*data3[i]) = this->pb.val(plvars[3 + i*6]);
-                this->pb.val(*data4[i]) = this->pb.val(plvars[4 + i*6]);
+                this->pb.val(*data0[i]) = this->pb.val(plvars[0 + i*ZKLAIM_MAX_PAYLOAD_ATTRIBUTES]);
+                this->pb.val(*data1[i]) = this->pb.val(plvars[1 + i*ZKLAIM_MAX_PAYLOAD_ATTRIBUTES]);
+                this->pb.val(*data2[i]) = this->pb.val(plvars[2 + i*ZKLAIM_MAX_PAYLOAD_ATTRIBUTES]);
+                this->pb.val(*data3[i]) = this->pb.val(plvars[3 + i*ZKLAIM_MAX_PAYLOAD_ATTRIBUTES]);
+                this->pb.val(*data4[i]) = this->pb.val(plvars[4 + i*ZKLAIM_MAX_PAYLOAD_ATTRIBUTES]);
                 data0_cgs[i]->generate_r1cs_witness();
                 data1_cgs[i]->generate_r1cs_witness();
                 data2_cgs[i]->generate_r1cs_witness();

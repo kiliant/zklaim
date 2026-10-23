@@ -42,6 +42,11 @@
 #define ZKLAIM_UNTRUSTED_ISSUER 4
 #define ZKLAIM_UNEXPECTED_PREDICATE 5
 #define ZKLAIM_MAX_PAYLOAD_ATTRIBUTES 5
+// A 15-byte salt is the largest that keeps the five attributes and the salt
+// in one SHA-256 block (55 bytes plus padding), i.e. one in-circuit compression.
+#define ZKLAIM_SALT_SIZE 15
+#define ZKLAIM_PRE_SIZE (ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * 8 + ZKLAIM_SALT_SIZE)
+#define ZKLAIM_NONCE_SIZE 32
 
 // enum specifying the operations of zklaim comparisons
 enum zklaim_op {
@@ -65,10 +70,10 @@ typedef struct zklaim_proof zklaim_proof;
 struct zklaim_payload {
     uint64_t data_ref[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
     enum zklaim_op data_op[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
-    uint64_t salt;
+    unsigned char salt[ZKLAIM_SALT_SIZE];
     unsigned char hash[32];
     uint8_t priv;
-    unsigned char pre[48]; // five uint64 attributes and salt, all big-endian
+    unsigned char pre[ZKLAIM_PRE_SIZE]; // five big-endian uint64 attributes, then the salt
 };
 
 /** Verifier-selected references and operations for one payload, in wire order. */
@@ -94,10 +99,6 @@ typedef struct zklaim_sig {
 typedef struct zklaim_ctx {
     size_t num_of_payloads;
     zklaim_wrap_payload_ctx *pl_ctx_head;
-    size_t pk_size;
-    unsigned char *pk;
-    size_t vk_size;
-    unsigned char *vk;
     size_t proof_size;
     unsigned char *proof;
     unsigned char pub_key[32];
@@ -152,35 +153,44 @@ size_t zklaim_ctx_serialize_credential(zklaim_ctx *ctx, unsigned char **buf);
  * @param buf the buffer containing the context data
  * @param len length of the buffer in bytes
  * @return ZKLAIM_OK on success, or ZKLAIM_ERROR for invalid input,
- *         allocation failure, or a context with payloads or key/proof storage.
- *         On failure, the destination context is unchanged. Key and proof
- *         contents are parsed when generating or verifying a proof.
+ *         allocation failure, or a context with payloads or proof storage.
+ *         On failure, the destination context is unchanged. Proof contents
+ *         are parsed when verifying.
  */
 int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len);
 
 
 /**
- * verifies a context against the verifier's trusted issuer and predicates
+ * verifies a context against the verifier's trusted issuer, verification key,
+ * predicates, and challenge
  *
  * @param ctx the context to verify
  * @param trusted_issuer_key trusted 32-byte issuer public key, obtained separately
  *        from the received context (the encoding returned by zklaim_pub2buf)
+ * @param trusted_vk verification key pinned for this issuer and payload count,
+ *        as returned by zklaim_trusted_setup and obtained separately
+ * @param trusted_vk_size length of trusted_vk in bytes
  * @param expected verifier-selected predicates, one per payload in payload order;
  *        all references and operations must match exactly, including noop slots
  * @param expected_count number of predicates; must be nonzero and match the
  *        context's payload count and list length
+ * @param nonce the fresh challenge this verifier sent to the prover; never
+ *        reuse a nonce, or a previously seen presentation can be replayed
  * @return ZKLAIM_OK only if the issuer, predicates, signature, and proof pass;
  *         ZKLAIM_UNTRUSTED_ISSUER for a different embedded issuer key;
  *         ZKLAIM_UNEXPECTED_PREDICATE for a different predicate or payload count;
- *         ZKLAIM_INVALID_SIGNATURE or ZKLAIM_INVALID_PROOF for cryptographic failure;
+ *         ZKLAIM_INVALID_SIGNATURE or ZKLAIM_INVALID_PROOF for cryptographic failure,
+ *         including a proof for another nonce or verification key;
  *         ZKLAIM_ERROR for NULL arguments, invalid expected operations, an empty
  *         policy, malformed context storage, or an internal error.
  *
- * This replaces the former one-argument API. Do not obtain trusted_issuer_key
- * or expected from the untrusted context. The context is unchanged.
+ * Do not obtain any trust argument from the untrusted context. The context is
+ * unchanged.
  */
 int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_issuer_key[32],
-                      const zklaim_predicate *expected, size_t expected_count);
+                      const unsigned char *trusted_vk, size_t trusted_vk_size,
+                      const zklaim_predicate *expected, size_t expected_count,
+                      const unsigned char nonce[ZKLAIM_NONCE_SIZE]);
 
 
 /**
@@ -196,36 +206,56 @@ int zklaim_ctx_sign(zklaim_ctx*, gcry_sexp_t);
 
 
 /**
- * generate a proof for the given context
+ * generate a proof for the given context, bound to the verifier's challenge
  *
  * @param ctx the context for which the proof should be generated
- * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if the context is NULL,
- *         has no payloads, or proof generation fails.
+ * @param pk proving key from zklaim_trusted_setup for the context's payload count
+ * @param pk_size length of pk in bytes
+ * @param nonce the challenge received from the verifier
+ * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if an argument is NULL, the
+ *         context has no payloads, the proving key belongs to another circuit,
+ *         or proof generation fails. On failure, the context is unchanged.
  */
-int zklaim_proof_generate(zklaim_ctx *ctx);
+int zklaim_proof_generate(zklaim_ctx *ctx, const unsigned char *pk, size_t pk_size,
+                          const unsigned char nonce[ZKLAIM_NONCE_SIZE]);
 
 
 /**
  * verifies only the proof contained in the given context
  *
- * This low-level check uses the context's verification key and predicates. It
- * does not authenticate the issuer or enforce verifier policy; applications
- * accepting credentials must use zklaim_ctx_verify instead.
+ * This low-level check uses the context's predicates. It does not authenticate
+ * the issuer or enforce verifier policy; applications accepting credentials
+ * must use zklaim_ctx_verify instead.
  *
  * @param ctx the context to verify
+ * @param vk verification key for the context's payload count
+ * @param vk_size length of vk in bytes
+ * @param nonce the challenge the proof must be bound to
  * @result ZKLAIM_OK on success
  */
-int zklaim_proof_verify(zklaim_ctx *ctx);
+int zklaim_proof_verify(zklaim_ctx *ctx, const unsigned char *vk, size_t vk_size,
+                        const unsigned char nonce[ZKLAIM_NONCE_SIZE]);
 
 
 /**
- * perform the trusted setup for a given context
+ * perform the trusted setup for credentials with a given number of payloads
  *
- * @param ctx the context for which to generate the keys
- * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if the context is NULL
- *         or has no payloads, or setup fails.
+ * The circuit depends only on the payload count, so an issuer runs this once
+ * per supported count and reuses the keys for every credential. Provers need
+ * the proving key; verifiers pin the verification key. Whoever runs the setup
+ * can forge proofs for its circuit, so verifiers must trust that party (for an
+ * issuer-run setup, the issuer).
+ *
+ * @param num_of_payloads number of payloads per credential, 1 to UINT32_MAX
+ * @param pk receives the newly allocated proving key
+ * @param pk_size receives the length of the proving key in bytes
+ * @param vk receives the newly allocated verification key
+ * @param vk_size receives the length of the verification key in bytes
+ * @return ZKLAIM_OK on success, or ZKLAIM_ERROR for invalid arguments or if
+ *         setup fails. On failure, *pk and *vk are NULL and both sizes are zero.
  */
-int zklaim_trusted_setup(zklaim_ctx *ctx);
+int zklaim_trusted_setup(size_t num_of_payloads, unsigned char **pk, size_t *pk_size,
+                         unsigned char **vk, size_t *vk_size);
 
 
 /**
@@ -293,9 +323,9 @@ int zklaim_get_attr(const zklaim_payload *pl, uint8_t pos, uint64_t *attr);
 void zklaim_clear_pres(zklaim_ctx *ctx);
 
 // forward declarations of C++ wrappers imported via linkage
-int libsnark_trusted_setup(zklaim_ctx*);
-int libsnark_prove(zklaim_ctx*);
-int libsnark_verify(zklaim_ctx*);
+int libsnark_trusted_setup(size_t, unsigned char**, size_t*, unsigned char**, size_t*);
+int libsnark_prove(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
+int libsnark_verify(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
 int libsnark_import_proof(zklaim_proof**, unsigned char*, size_t);
 size_t libsnark_export_proof(zklaim_proof*, unsigned char**);
 void libsnark_free(zklaim_proving_key*, zklaim_verification_key*, zklaim_proof*);

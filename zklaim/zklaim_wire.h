@@ -3,12 +3,13 @@
 
 #include <stdint.h>
 
-#define ZKLAIM_WIRE_VERSION 1
+#define ZKLAIM_WIRE_VERSION 2
 #define ZKLAIM_WIRE_HEADER_SIZE 88
 #define ZKLAIM_WIRE_PRESENTATION 2
 #define ZKLAIM_WIRE_CREDENTIAL 1
 #define ZKLAIM_WIRE_PUBLIC_PAYLOAD_SIZE 77
-#define ZKLAIM_WIRE_CREDENTIAL_PAYLOAD_SIZE 126
+#define ZKLAIM_WIRE_CREDENTIAL_PAYLOAD_SIZE 133 /* public part, flag, 55-byte witness */
+#define ZKLAIM_SIGNED_PREFIX_SIZE 12
 
 static inline void zklaim_store_u64(unsigned char *out, uint64_t value) {
     for (unsigned int i = 0; i < 8; ++i) out[i] = (unsigned char) (value >> (56 - 8 * i));

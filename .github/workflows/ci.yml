@@ -61,13 +61,15 @@ jobs:
 
       - name: Generate and verify portable presentation
         run: |
-          build/zklaim/wire_portability issue wire-${{ matrix.os }}.zkp
-          build/zklaim/wire_portability verify wire-${{ matrix.os }}.zkp
+          build/zklaim/wire_portability issue wire-${{ matrix.os }}.zkp wire-${{ matrix.os }}.vk
+          build/zklaim/wire_portability verify wire-${{ matrix.os }}.zkp wire-${{ matrix.os }}.vk
 
       - uses: actions/upload-artifact@v4
         with:
           name: wire-${{ matrix.os }}
-          path: wire-${{ matrix.os }}.zkp
+          path: |
+            wire-${{ matrix.os }}.zkp
+            wire-${{ matrix.os }}.vk
 
   portability:
     name: Wire portability (${{ matrix.platform }})
@@ -104,7 +106,7 @@ jobs:
               cmake --build build-portable --target wire_portability --parallel 2
               for fixture in fixtures/*.zkp; do
                 echo "Verifying $fixture"
-                build-portable/zklaim/wire_portability verify "$fixture"
+                build-portable/zklaim/wire_portability verify "$fixture" "${fixture%.zkp}.vk"
               done
             '
 

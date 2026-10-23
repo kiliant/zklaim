@@ -48,9 +48,9 @@ extern "C" {
 //#endif
 
 extern "C" {
-    int libsnark_trusted_setup(zklaim_ctx*);
-    int libsnark_prove(zklaim_ctx*);
-    int libsnark_verify(zklaim_ctx*);
+    int libsnark_trusted_setup(size_t, unsigned char**, size_t*, unsigned char**, size_t*);
+    int libsnark_prove(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
+    int libsnark_verify(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
     int libsnark_import_proof(zklaim_proof**, unsigned char*, size_t);
     void libsnark_free(zklaim_proving_key*, zklaim_verification_key*, zklaim_proof*);
     size_t libsnark_export_proof(zklaim_proof*, unsigned char**);
@@ -65,7 +65,7 @@ using namespace libsnark;
  * this is needed to convert a memory region of length *len* to a
  * std::vector<bool> bit_vector
  */
-bit_vector memtobv(unsigned char* mem, size_t len) {
+bit_vector memtobv(const unsigned char* mem, size_t len) {
     bit_vector res(len);
     size_t wordsize = 8;
     for (size_t i = 0; i < len/wordsize; i++) {
@@ -212,13 +212,13 @@ size_t libsnark_export_vk(r1cs_gg_ppzksnark_verification_key<ppT> vk, unsigned c
 }
 
 template<typename T>
-int libsnark_import(T *value, unsigned char *buf, size_t blen) {
+int libsnark_import(T *value, const unsigned char *buf, size_t blen) {
     if (value == nullptr || buf == nullptr || blen == 0 ||
         blen > static_cast<size_t>(std::numeric_limits<std::streamsize>::max())) {
         return ZKLAIM_ERROR;
     }
     try {
-        stream_mem_buf buffer(reinterpret_cast<char *>(buf), blen);
+        stream_mem_buf buffer(reinterpret_cast<const char *>(buf), blen);
         std::istream stream(&buffer);
         stream.imbue(std::locale(std::locale::classic(), new bounded_num_get(blen)));
         // Throw at the first failed read, before libsnark uses an unread count
@@ -241,16 +241,11 @@ int libsnark_import(T *value, unsigned char *buf, size_t blen) {
     }
 }
 
-int libsnark_import_vk(r1cs_gg_ppzksnark_verification_key<ppT>* vk, unsigned char *buf, size_t blen) {
+int libsnark_import_vk(r1cs_gg_ppzksnark_verification_key<ppT>* vk, const unsigned char *buf, size_t blen) {
     if (libsnark_import(vk, buf, blen) != ZKLAIM_OK) return ZKLAIM_ERROR;
     // libsnark's sparse-vector reader accepts inconsistent counts and indices.
     const auto &rest = vk->gamma_ABC_g1.rest;
-    if (rest.indices.size() != rest.values.size() ||
-        rest.indices.size() > rest.domain_size()) return ZKLAIM_ERROR;
-    for (size_t i = 0; i < rest.indices.size(); ++i) {
-        if (rest.indices[i] >= rest.domain_size() ||
-            (i > 0 && rest.indices[i - 1] >= rest.indices[i])) return ZKLAIM_ERROR;
-    }
+    if (!valid_sparse_vector(rest)) return ZKLAIM_ERROR;
     if (!vk->gamma_g2.is_well_formed() || !vk->delta_g2.is_well_formed() ||
         !vk->gamma_ABC_g1.first.is_well_formed()) return ZKLAIM_ERROR;
     for (const auto &point : rest.values) if (!point.is_well_formed()) return ZKLAIM_ERROR;
@@ -261,7 +256,7 @@ size_t libsnark_export_pk(r1cs_gg_ppzksnark_proving_key<ppT> pk, unsigned char *
     return libsnark_export(pk, buf);
 }
 
-int libsnark_import_pk(r1cs_gg_ppzksnark_proving_key<ppT>* pk, unsigned char *buf, size_t blen) {
+int libsnark_import_pk(r1cs_gg_ppzksnark_proving_key<ppT>* pk, const unsigned char *buf, size_t blen) {
     return libsnark_import(pk, buf, blen);
 }
 
@@ -269,14 +264,31 @@ size_t libsnark_export_proof(r1cs_gg_ppzksnark_proof<ppT> proof, unsigned char *
     return libsnark_export(proof, buf);
 }
 
-int libsnark_import_proof(r1cs_gg_ppzksnark_proof<ppT>* proof, unsigned char *buf, size_t blen) {
+int libsnark_import_proof(r1cs_gg_ppzksnark_proof<ppT>* proof, const unsigned char *buf, size_t blen) {
     if (libsnark_import(proof, buf, blen) != ZKLAIM_OK || !proof->is_well_formed()) return ZKLAIM_ERROR;
     return ZKLAIM_OK;
 }
 
-// TODO
-int libsnark_trusted_setup(zklaim_ctx *ctx) try {
-    if (ctx == nullptr || ctx->num_of_payloads == 0 || ctx->pl_ctx_head == nullptr) {
+// The circuit is sized by num_of_payloads, while witnesses and public inputs
+// are read from the list; both must agree.
+static bool payload_list_matches(const zklaim_ctx *ctx) {
+    if (ctx->num_of_payloads == 0 || ctx->num_of_payloads > UINT32_MAX) return false;
+    const zklaim_wrap_payload_ctx *node = ctx->pl_ctx_head;
+    for (size_t i = 0; i < ctx->num_of_payloads; ++i) {
+        if (node == nullptr) return false;
+        node = node->next;
+    }
+    return node == nullptr;
+}
+
+int libsnark_trusted_setup(size_t num_of_payloads, unsigned char **pk_out, size_t *pk_size_out,
+                           unsigned char **vk_out, size_t *vk_size_out) try {
+    if (pk_out == nullptr || pk_size_out == nullptr || vk_out == nullptr || vk_size_out == nullptr) {
+        return ZKLAIM_ERROR;
+    }
+    *pk_out = *vk_out = nullptr;
+    *pk_size_out = *vk_size_out = 0;
+    if (num_of_payloads == 0 || num_of_payloads > UINT32_MAX) {
         return ZKLAIM_ERROR;
     }
 #ifndef DEBUG
@@ -284,7 +296,7 @@ int libsnark_trusted_setup(zklaim_ctx *ctx) try {
     libff::inhibit_profiling_info = 1;
 #endif
     ppT::init_public_params();
-    auto keypair = generate_keypair<ppT>(ctx);
+    auto keypair = generate_keypair<ppT>(num_of_payloads);
 
     unsigned char *vk = nullptr;
     const size_t vk_size = libsnark_export_vk(keypair.vk, &vk);
@@ -294,21 +306,19 @@ int libsnark_trusted_setup(zklaim_ctx *ctx) try {
     const size_t pk_size = libsnark_export_pk(keypair.pk, &pk);
     std::unique_ptr<unsigned char, decltype(&free)> pk_storage(pk, free);
     if (pk_size == 0) return ZKLAIM_ERROR;
-    free(ctx->vk);
-    free(ctx->pk);
-    ctx->vk = vk_storage.release();
-    ctx->vk_size = vk_size;
-    ctx->pk = pk_storage.release();
-    ctx->pk_size = pk_size;
+    *vk_out = vk_storage.release();
+    *vk_size_out = vk_size;
+    *pk_out = pk_storage.release();
+    *pk_size_out = pk_size;
 
     return 0;
 } catch (...) {
     return ZKLAIM_ERROR;
 }
 
-// TODO
-int libsnark_prove(zklaim_ctx *ctx) try {
-    if (ctx == nullptr || ctx->num_of_payloads == 0 || ctx->pl_ctx_head == nullptr) {
+int libsnark_prove(zklaim_ctx *ctx, const unsigned char *pk_buf, size_t pk_size,
+                   const unsigned char *nonce) try {
+    if (ctx == nullptr || pk_buf == nullptr || nonce == nullptr || !payload_list_matches(ctx)) {
         return ZKLAIM_ERROR;
     }
 #ifndef DEBUG
@@ -318,12 +328,12 @@ int libsnark_prove(zklaim_ctx *ctx) try {
     ppT::init_public_params();
     r1cs_gg_ppzksnark_proving_key<ppT> pk;
 
-    if (libsnark_import_pk(&pk, ctx->pk, ctx->pk_size) != ZKLAIM_OK) {
+    if (libsnark_import_pk(&pk, pk_buf, pk_size) != ZKLAIM_OK) {
         return ZKLAIM_ERROR;
     }
 
     r1cs_gg_ppzksnark_proof<ppT> libsnark_proof;
-    if (!generate_proof<ppT>(pk, ctx, libsnark_proof)) {
+    if (!generate_proof<ppT>(pk, ctx, nonce, libsnark_proof)) {
         return 1;
     }
 
@@ -339,9 +349,9 @@ int libsnark_prove(zklaim_ctx *ctx) try {
     return ZKLAIM_ERROR;
 }
 
-// TODO
-int libsnark_verify(zklaim_ctx *ctx) try {
-    if (ctx == nullptr || ctx->num_of_payloads == 0 || ctx->pl_ctx_head == nullptr) {
+int libsnark_verify(zklaim_ctx *ctx, const unsigned char *vk_buf, size_t vk_size,
+                    const unsigned char *nonce) try {
+    if (ctx == nullptr || vk_buf == nullptr || nonce == nullptr || !payload_list_matches(ctx)) {
         return ZKLAIM_ERROR;
     }
 #ifndef DEBUG
@@ -353,11 +363,11 @@ int libsnark_verify(zklaim_ctx *ctx) try {
     r1cs_gg_ppzksnark_verification_key<ppT> vk;
 
     r1cs_gg_ppzksnark_proof<ppT> libsnark_proof;
-    if (libsnark_import_vk(&vk, ctx->vk, ctx->vk_size) != ZKLAIM_OK ||
+    if (libsnark_import_vk(&vk, vk_buf, vk_size) != ZKLAIM_OK ||
         libsnark_import_proof(&libsnark_proof, ctx->proof, ctx->proof_size) != ZKLAIM_OK) {
         res = ZKLAIM_ERROR;
     } else {
-        res = !verify_proof<ppT>(vk, libsnark_proof, ctx);
+        res = !verify_proof<ppT>(vk, libsnark_proof, ctx, nonce);
     }
     return res;
 } catch (...) {
