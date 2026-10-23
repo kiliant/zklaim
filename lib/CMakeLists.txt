@@ -7,6 +7,12 @@ set(LIBFF_DIR ${LIBSNARK_DIR}/depends/libff)
 # libff and googletest declare outdated cmake_minimum_required versions (libff:
 # 2.8, which CMake >= 4.0 rejects unless a newer policy version is requested)
 set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
+# CMAKE_POLICY_VERSION_MINIMUM only exists since CMake 4.0. Before that, libff's
+# old minimum version leaves CMP0063 unset, and CMake ignores the visibility
+# properties set below. libzklaim would then export libff, and a program
+# linking both libzklaim and libff could initialize one copy of libff's curve
+# parameters while using the other.
+set(CMAKE_POLICY_DEFAULT_CMP0063 NEW)
 
 # skip libff's own dependencies, tests and docs
 set(IS_LIBFF_PARENT OFF CACHE INTERNAL "")
