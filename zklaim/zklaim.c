@@ -344,14 +344,17 @@ int zklaim_ctx_sign(zklaim_ctx *ctx, gcry_sexp_t priv) {
     int res = ZKLAIM_ERROR;
     unsigned char *buf = NULL;
     unsigned char *sigbuf = NULL;
+    unsigned char *key = NULL;
     size_t total_length = 0;
     size_t sigsize = 0;
+    size_t key_size = 0;
     gcry_sexp_t sig = NULL;
 
     if (ctx == NULL || priv == NULL) {
         return ZKLAIM_ERROR;
     }
-    if (plain_ctx(ctx, &buf, &total_length) != ZKLAIM_OK ||
+    if (zklaim_pub2buf(priv, &key, &key_size) != ZKLAIM_OK || key_size != sizeof(ctx->pub_key) ||
+        plain_ctx(ctx, &buf, &total_length) != ZKLAIM_OK ||
         zklaim_sign(buf, total_length, &sig, priv) != ZKLAIM_OK ||
         zklaim_sig2buf(sig, &sigbuf, &sigsize) != ZKLAIM_OK ||
         sigbuf == NULL || sigsize != sizeof(ctx->signature)) {
@@ -359,11 +362,13 @@ int zklaim_ctx_sign(zklaim_ctx *ctx, gcry_sexp_t priv) {
     }
 
     memcpy(ctx->signature, sigbuf, sizeof(ctx->signature));
+    memcpy(ctx->pub_key, key, sizeof(ctx->pub_key));
     res = ZKLAIM_OK;
 
 cleanup:
     gcry_sexp_release(sig);
     free(sigbuf);
+    free(key);
     free(buf);
     return res;
 }

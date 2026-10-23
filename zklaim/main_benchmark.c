@@ -47,13 +47,11 @@ int worker(int k) {
 
     zklaim_ctx *ctx = zklaim_context_new();
 
-    if (sizeof(ctx->pub_key) != publen) {
+    if (publen != 32) {
         printf("size mismatch!");
         return 1;
     }
 
-    // TODO: there should be a zklaim method for this
-    memcpy(ctx->pub_key, pubbuf, sizeof(ctx->pub_key));
     unsigned char trusted_issuer_key[32];
     memcpy(trusted_issuer_key, pubbuf, sizeof(trusted_issuer_key));
     free(pubbuf);

@@ -285,10 +285,11 @@ TEST(zklaim, trusted_setup_rejects_invalid_arguments_without_output) {
 static int context_sign_failure_result(gcry_sexp_t key) {
     zklaim_ctx ctx = {};
     memset(ctx.signature, 0xa5, sizeof(ctx.signature));
-    unsigned char original[sizeof(ctx.signature)];
-    memcpy(original, ctx.signature, sizeof(original));
+    memset(ctx.pub_key, 0x5a, sizeof(ctx.pub_key));
+    zklaim_ctx original = ctx;
     if (zklaim_ctx_sign(&ctx, key) != ZKLAIM_ERROR) return 1;
-    if (memcmp(original, ctx.signature, sizeof(original)) != 0) return 2;
+    if (memcmp(original.signature, ctx.signature, sizeof(ctx.signature)) != 0) return 2;
+    if (memcmp(original.pub_key, ctx.pub_key, sizeof(ctx.pub_key)) != 0) return 3;
     return 0;
 }
 

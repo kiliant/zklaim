@@ -189,12 +189,13 @@ ZKLAIM_API int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_is
 
 /**
  * signs a context
- * this means that the hashes contained in the context will be signed
+ * this means that the hashes contained in the context will be signed, and the
+ * signer's public key is stored as the context's issuer key
  *
  * @param ctx the context to sign
  * @param priv the private key used for creating the signature
  * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if signing or serialization fails.
- *         On failure, the existing context signature is unchanged.
+ *         On failure, the existing context signature and issuer key are unchanged.
  */
 ZKLAIM_API int zklaim_ctx_sign(zklaim_ctx*, gcry_sexp_t);
 

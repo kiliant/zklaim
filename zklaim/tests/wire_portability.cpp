@@ -52,7 +52,6 @@ int main(int argc, char **argv) {
         memcpy(pl.data_ref, policy.data_ref, sizeof(pl.data_ref));
         memcpy(pl.data_op, policy.data_op, sizeof(pl.data_op));
         for (uint8_t i = 0; i < 5; ++i) zklaim_set_attr(&pl, policy.data_ref[i], i);
-        memcpy(ctx->pub_key, test_key, 32);
         zklaim_add_pl(ctx.get(), pl);
         zklaim_hash_ctx(ctx.get());
         unsigned char *pk = nullptr, *vk = nullptr;
