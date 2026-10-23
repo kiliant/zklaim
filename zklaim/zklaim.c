@@ -217,7 +217,52 @@ int plain_ctx(zklaim_ctx *ctx, unsigned char **buf, size_t *total_length) {
     return ZKLAIM_OK;
 }
 
-int zklaim_ctx_verify(zklaim_ctx *ctx) {
+int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_issuer_key[32],
+                      const zklaim_predicate *expected, size_t expected_count) {
+    if (ctx == NULL || trusted_issuer_key == NULL || expected == NULL ||
+        expected_count == 0 || expected_count > SIZE_MAX / sizeof(*expected) ||
+        (ctx->vk_size > 0 && ctx->vk == NULL) ||
+        ctx->num_of_payloads > (SIZE_MAX - ctx->vk_size) / sizeof(((zklaim_payload*)0)->hash)) {
+        return ZKLAIM_ERROR;
+    }
+
+    unsigned char issuer_key[sizeof(ctx->pub_key)];
+    memcpy(issuer_key, trusted_issuer_key, sizeof(issuer_key));
+    if (memcmp(ctx->pub_key, issuer_key, sizeof(issuer_key)) != 0) {
+        return ZKLAIM_UNTRUSTED_ISSUER;
+    }
+    if (ctx->num_of_payloads != expected_count) {
+        return ZKLAIM_UNEXPECTED_PREDICATE;
+    }
+    const zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
+    for (size_t i = 0; i < expected_count; ++i) {
+        if (cur == NULL) {
+            return ZKLAIM_ERROR;
+        }
+        for (size_t attr = 0; attr < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++attr) {
+            switch (expected[i].data_op[attr]) {
+                case zklaim_less:
+                case zklaim_less_or_eq:
+                case zklaim_eq:
+                case zklaim_greater_or_eq:
+                case zklaim_greater:
+                case zklaim_not_eq:
+                case zklaim_noop:
+                    break;
+                default:
+                    return ZKLAIM_ERROR;
+            }
+            if (cur->pl.data_ref[attr] != expected[i].data_ref[attr] ||
+                cur->pl.data_op[attr] != expected[i].data_op[attr]) {
+                return ZKLAIM_UNEXPECTED_PREDICATE;
+            }
+        }
+        cur = cur->next;
+    }
+    if (cur != NULL) {
+        return ZKLAIM_ERROR;
+    }
+
     // verify signature
     gcry_sexp_t sig, pub;
     size_t total_length;
@@ -228,7 +273,7 @@ int zklaim_ctx_verify(zklaim_ctx *ctx) {
         return ZKLAIM_ERROR;
     }
 
-    if (zklaim_buf2pub(ctx->pub_key, sizeof(ctx->pub_key), &pub)) {
+    if (zklaim_buf2pub(issuer_key, sizeof(issuer_key), &pub)) {
         fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "could not load pub");
         gcry_sexp_release(sig);
         return ZKLAIM_ERROR;

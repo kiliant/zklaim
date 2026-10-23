@@ -345,6 +345,12 @@ TEST(zklaim, can_detect_invalid_signature) {
     zklaim_add_pl(ctx, pl);
     zklaim_add_pl(ctx, pl2);
 
+    zklaim_predicate expected[2] = {};
+    memcpy(expected[0].data_ref, pl.data_ref, sizeof(pl.data_ref));
+    memcpy(expected[0].data_op, pl.data_op, sizeof(pl.data_op));
+    memcpy(expected[1].data_ref, pl2.data_ref, sizeof(pl2.data_ref));
+    memcpy(expected[1].data_op, pl2.data_op, sizeof(pl2.data_op));
+
     zklaim_hash_ctx(ctx);
 
     ASSERT_FALSE(zklaim_ctx_sign(ctx, priv));
@@ -362,7 +368,7 @@ TEST(zklaim, can_detect_invalid_signature) {
     ctx_prover->pk_size = ctx->pk_size;
     memcpy(ctx_prover->pk, ctx->pk, ctx_prover->pk_size);
 
-    ctx_prover->pl_ctx_head->pl.data_ref[0] = 19;
+    zklaim_set_attr(&ctx_prover->pl_ctx_head->pl, 19, 0);
     zklaim_hash_ctx(ctx_prover);
 
     zklaim_clear_pres(ctx_prover);
@@ -374,7 +380,9 @@ TEST(zklaim, can_detect_invalid_signature) {
 
     ASSERT_FALSE(zklaim_ctx_deserialize(ctx_verifier, ctx_prover_buf, len));
 
-    ASSERT_TRUE(zklaim_ctx_verify(ctx_verifier));
+    ASSERT_EQ(ZKLAIM_INVALID_SIGNATURE,
+              zklaim_ctx_verify(ctx_verifier, pubbuf, expected, 2));
+    free(pubbuf);
 }
 
 TEST(DISABLED_zklaim, can_serialize) {
@@ -410,6 +418,10 @@ TEST(zklaim, can_verify) {
     zklaim_ctx *ctx = zklaim_context_new();
     zklaim_add_pl(ctx, pl);
 
+    zklaim_predicate expected = {};
+    memcpy(expected.data_ref, pl.data_ref, sizeof(pl.data_ref));
+    memcpy(expected.data_op, pl.data_op, sizeof(pl.data_op));
+
     ASSERT_FALSE(memcmp(&pl, &ctx->pl_ctx_head->pl, sizeof(zklaim_payload)));
 
     zklaim_hash_ctx(ctx);
@@ -418,7 +430,7 @@ TEST(zklaim, can_verify) {
 
     ASSERT_FALSE(zklaim_trusted_setup(ctx));
     ASSERT_FALSE(zklaim_ctx_sign(ctx, priv));
-    ASSERT_TRUE(zklaim_ctx_verify(ctx) == ZKLAIM_INVALID_PROOF);
+    ASSERT_EQ(ZKLAIM_INVALID_PROOF, zklaim_ctx_verify(ctx, pubbuf, &expected, 1));
     free(pubbuf);
 }
 
@@ -791,6 +803,12 @@ TEST(zklaim, three_party_run) {
     zklaim_add_pl(ctx, pl);
     zklaim_add_pl(ctx, pl2);
 
+    zklaim_predicate expected[2] = {};
+    memcpy(expected[0].data_ref, pl.data_ref, sizeof(pl.data_ref));
+    memcpy(expected[0].data_op, pl.data_op, sizeof(pl.data_op));
+    memcpy(expected[1].data_ref, pl2.data_ref, sizeof(pl2.data_ref));
+    memcpy(expected[1].data_op, pl2.data_op, sizeof(pl2.data_op));
+
     zklaim_hash_ctx(ctx);
 
     ASSERT_FALSE(zklaim_trusted_setup(ctx));
@@ -810,7 +828,8 @@ TEST(zklaim, three_party_run) {
     ctx_prover->pk_size = ctx->pk_size;
     memcpy(ctx_prover->pk, ctx->pk, ctx_prover->pk_size);
 
-    int res = zklaim_ctx_verify(ctx_prover);
+    int res = zklaim_ctx_verify(ctx_prover, pubbuf, expected, 2);
+    ASSERT_EQ(ZKLAIM_INVALID_PROOF, res);
 
     ASSERT_FALSE(zklaim_proof_generate(ctx_prover));
 
@@ -822,7 +841,8 @@ TEST(zklaim, three_party_run) {
     zklaim_ctx* ctx_verifier = zklaim_context_new();
 
     ASSERT_FALSE(zklaim_ctx_deserialize(ctx_verifier, ctx_prover_buf, len));
-    res = zklaim_ctx_verify(ctx_verifier);
+    res = zklaim_ctx_verify(ctx_verifier, pubbuf, expected, 2);
     ASSERT_FALSE(res);
+    free(pubbuf);
 }
 

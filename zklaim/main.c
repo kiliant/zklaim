@@ -57,7 +57,18 @@ int worker() {
 
     // TODO: there should be a zklaim method for this
     memcpy(ctx->pub_key, pubbuf, sizeof(ctx->pub_key));
+    // The verifier obtains this key from its issuer configuration, separately
+    // from the prover's serialized context. This demo uses the issuer above.
+    unsigned char trusted_issuer_key[32];
+    memcpy(trusted_issuer_key, pubbuf, sizeof(trusted_issuer_key));
     free(pubbuf);
+
+    // Verifier policy: prove that attribute 0 is at least 20. The verifier
+    // supplies this request to the prover and retains its own copy.
+    const zklaim_predicate expected[] = {
+        {{20, 0, 0, 0, 0},
+         {zklaim_greater_or_eq, zklaim_noop, zklaim_noop, zklaim_noop, zklaim_noop}}
+    };
 
     //print_sexp(pub);
 
@@ -79,6 +90,10 @@ int worker() {
     pl.data_ref[4] = 600;
     pl.data_op[4] = zklaim_less;
     pl.priv = 0;
+
+    zklaim_predicate issued_predicate;
+    memcpy(issued_predicate.data_ref, pl.data_ref, sizeof(pl.data_ref));
+    memcpy(issued_predicate.data_op, pl.data_op, sizeof(pl.data_op));
 
     memset(&pl2, 0, sizeof(zklaim_payload));
     pl2.data_ref[0] = 0;
@@ -177,35 +192,19 @@ int worker() {
 
     zklaim_print(ctx_prover);
 
-    ctx_prover->pk = ctx->pk;
-
-    int res = zklaim_ctx_verify(ctx_prover);
+    int res = zklaim_ctx_verify(ctx_prover, trusted_issuer_key, &issued_predicate, 1);
     printf("[PROVER] verification result: %d %s\n", res, (res ? "failed" : "passed"));
     printf("                              ^--- failure with code 3 (ZKLAIM_INVALID_PROOF) is ok for the prover, as signature passes, but (non-existing) proof fails\n\n");
 
-    printf("[PROVER] resetting operations and reference values to create taylored proof\n");
+    printf("[PROVER] applying the verifier's requested predicate\n");
     printf("[PROVER] generating proof\n");
 
     ctx_prover->pk = (unsigned char*) calloc(1, ctx->pk_size);
     ctx_prover->pk_size = ctx->pk_size;
     memcpy(ctx_prover->pk, ctx->pk, ctx_prover->pk_size);
 
-    // set custom prover reference values here:
-    ctx_prover->pl_ctx_head->pl.data_ref[0] = 20;
-    /* ctx_prover->pl_ctx_head->next->pl.data_ref[0] = 30; */
-    /* ctx_prover->pl_ctx_head->next->pl.data_op[0] = zklaim_less_or_eq; */
-    //ctx_prover->pl_ctx_head->pl.data_op[0] = zklaim_less;
-    ctx_prover->pl_ctx_head->pl.data_ref[4] = 0;
-    ctx_prover->pl_ctx_head->pl.data_op[4] = zklaim_noop;
-
-    ctx_prover->pl_ctx_head->pl.data_ref[1] = 0;
-    ctx_prover->pl_ctx_head->pl.data_op[1] = zklaim_noop;
-
-    ctx_prover->pl_ctx_head->pl.data_ref[2] = 0;
-    ctx_prover->pl_ctx_head->pl.data_op[2] = zklaim_noop;
-
-    ctx_prover->pl_ctx_head->pl.data_ref[3] = 0;
-    ctx_prover->pl_ctx_head->pl.data_op[3] = zklaim_noop;
+    memcpy(ctx_prover->pl_ctx_head->pl.data_ref, expected[0].data_ref, sizeof(expected[0].data_ref));
+    memcpy(ctx_prover->pl_ctx_head->pl.data_op, expected[0].data_op, sizeof(expected[0].data_op));
 
     zklaim_print(ctx_prover);
 
@@ -235,7 +234,8 @@ int worker() {
     printf("\n[VERIFIER] deserializing context\n");
     printf("-> deserialisation status: %s\n\n", zklaim_ctx_deserialize(ctx_verifier, ctx_prover_buf, len) ? "failed" : "passed");
     printf("[VERIFIER] verifying proof and context\n");
-    res = zklaim_ctx_verify(ctx_verifier);
+    res = zklaim_ctx_verify(ctx_verifier, trusted_issuer_key, expected,
+                            sizeof(expected) / sizeof(expected[0]));
     printf("verification result: %d %s\n\n", res, (res ? "failed" : "passed"));
 
     zklaim_print(ctx_verifier);
@@ -248,7 +248,7 @@ int worker() {
     zklaim_ctx_free(ctx_prover);
     zklaim_ctx_free(ctx_verifier);
 
-    return ZKLAIM_OK;
+    return res;
 }
 
 int main() {

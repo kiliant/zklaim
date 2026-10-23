@@ -32,6 +32,24 @@ The build works on x86-64 and arm64 (Linux and macOS). Useful options (pass as `
 ## Use the Library
 ``cmake --install build`` installs ``libzklaim`` and its headers (``#include <zklaim/zklaim.h>``). Link your program with ``-lzklaim -lgcrypt``.
 
+Credential verification requires an issuer public key from the verifier's trusted configuration and an expected predicate for every payload, in payload order. For example, a verifier requiring attribute 0 to be at least 18 in a single-payload credential can use:
+
+```c
+int accept_age_credential(zklaim_ctx *received,
+                          const unsigned char trusted_issuer_key[32]) {
+    const zklaim_predicate expected[] = {
+        {{18, 0, 0, 0, 0},
+         {zklaim_greater_or_eq, zklaim_noop, zklaim_noop, zklaim_noop, zklaim_noop}}
+    };
+    return zklaim_ctx_verify(received, trusted_issuer_key, expected,
+                             sizeof(expected) / sizeof(expected[0]));
+}
+```
+
+The key uses the 32-byte encoding returned by `zklaim_pub2buf`. Obtain it through a trusted channel; never select the trusted key from `received->pub_key`. Define the expected references and operations from the verifier's policy, and send that request to the prover. Verification requires an exact match for every attribute (including `noop` slots) and the payload count, followed by a valid issuer signature and proof. Do not build the expected predicates by copying the received context.
+
+This replaces the former one-argument `zklaim_ctx_verify(ctx)` API. Migrate callers to pass the trusted key, expected predicates, and predicate count. An issuer mismatch returns `ZKLAIM_UNTRUSTED_ISSUER`; a predicate or payload-count mismatch returns `ZKLAIM_UNEXPECTED_PREDICATE`. `zklaim_proof_verify` is a low-level proof check: it does not authenticate an issuer or enforce the verifier's policy.
+
 
 ## Run the Tests
 The (unit) tests are run automatically by GitHub Actions on Linux (x86-64, arm64), macOS (arm64) and in the Arch Linux container for every push to master and every pull request.
