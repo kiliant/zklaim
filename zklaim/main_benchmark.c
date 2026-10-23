@@ -32,6 +32,7 @@ static sem_t file_sem;
 
 // to boost up valgrind
 int worker(int k) {
+    if (k <= 0) return ZKLAIM_ERROR;
     gcry_check_version(GCRYPT_VERSION);
     struct timespec t, t2;
     clock_t clock_begin, clock_end;
@@ -52,6 +53,8 @@ int worker(int k) {
 
     // TODO: there should be a zklaim method for this
     memcpy(ctx->pub_key, pubbuf, sizeof(ctx->pub_key));
+    unsigned char trusted_issuer_key[32];
+    memcpy(trusted_issuer_key, pubbuf, sizeof(trusted_issuer_key));
     free(pubbuf);
 
     //print_sexp(pub);
@@ -118,20 +121,29 @@ int worker(int k) {
 
     zklaim_ctx_sign(ctx, priv);
 
-    // set custom prover reference values here:
-    ctx->pl_ctx_head->pl.data_ref[0] = 20;
-    //ctx_prover->pl_ctx_head->pl.data_op[0] = zklaim_less;
-    ctx->pl_ctx_head->pl.data_ref[4] = 0;
-    ctx->pl_ctx_head->pl.data_op[4] = zklaim_noop;
+    // The verifier fixes the complete policy independently of the proof.
+    // Only the first payload uses the requested age predicate; the remaining
+    // payloads use the issuer's original predicates in this benchmark.
+    zklaim_predicate *expected = calloc((size_t) k, sizeof(*expected));
+    if (expected == NULL) {
+        zklaim_ctx_free(ctx);
+        gcry_sexp_release(priv);
+        gcry_sexp_release(pub);
+        return ZKLAIM_ERROR;
+    }
+    for (int i = 0; i < k; ++i) {
+        memcpy(expected[i].data_ref, pl.data_ref, sizeof(pl.data_ref));
+        memcpy(expected[i].data_op, pl.data_op, sizeof(pl.data_op));
+    }
+    expected[0].data_ref[0] = 20;
+    for (size_t attr = 1; attr < ZKLAIM_MAX_PAYLOAD_ATTRIBUTES; ++attr) {
+        expected[0].data_ref[attr] = 0;
+        expected[0].data_op[attr] = zklaim_noop;
+    }
 
-    ctx->pl_ctx_head->pl.data_ref[1] = 0;
-    ctx->pl_ctx_head->pl.data_op[1] = zklaim_noop;
-
-    ctx->pl_ctx_head->pl.data_ref[2] = 0;
-    ctx->pl_ctx_head->pl.data_op[2] = zklaim_noop;
-
-    ctx->pl_ctx_head->pl.data_ref[3] = 0;
-    ctx->pl_ctx_head->pl.data_op[3] = zklaim_noop;
+    // The prover applies the verifier's request to the first payload.
+    memcpy(ctx->pl_ctx_head->pl.data_ref, expected[0].data_ref, sizeof(expected[0].data_ref));
+    memcpy(ctx->pl_ctx_head->pl.data_op, expected[0].data_op, sizeof(expected[0].data_op));
 
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t);
     zklaim_proof_generate(ctx);
@@ -142,7 +154,7 @@ int worker(int k) {
     zklaim_clear_pres(ctx);
 
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t);
-    zklaim_ctx_verify(ctx);
+    const int verify_result = zklaim_ctx_verify(ctx, trusted_issuer_key, expected, (size_t) k);
     clock_gettime(CLOCK_THREAD_CPUTIME_ID,&t2);
 
     verifier_elapsed = (t2.tv_sec-t.tv_sec)*1000 + (t2.tv_nsec-t.tv_nsec)/1000/1000;
@@ -165,10 +177,11 @@ int worker(int k) {
     sem_post(&file_sem);
 
     zklaim_ctx_free(ctx);
+    free(expected);
     gcry_sexp_release(priv);
     gcry_sexp_release(pub);
 
-    return ZKLAIM_OK;
+    return verify_result;
 }
 
 void* thread_work(void* arg) {

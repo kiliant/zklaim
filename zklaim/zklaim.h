@@ -39,6 +39,8 @@
 #define ZKLAIM_ERROR 1
 #define ZKLAIM_INVALID_SIGNATURE 2
 #define ZKLAIM_INVALID_PROOF 3
+#define ZKLAIM_UNTRUSTED_ISSUER 4
+#define ZKLAIM_UNEXPECTED_PREDICATE 5
 #define ZKLAIM_MAX_PAYLOAD_ATTRIBUTES 5
 
 // enum specifying the operations of zklaim comparisons
@@ -69,6 +71,12 @@ struct zklaim_payload {
     uint8_t priv;
     unsigned char pre[48]; // this is by definition set to 0 if public
 };
+
+/** Verifier-selected references and operations for one payload, in wire order. */
+typedef struct zklaim_predicate {
+    uint64_t data_ref[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
+    enum zklaim_op data_op[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
+} zklaim_predicate;
 
 struct zklaim_header {
     uint32_t num_of_payloads;
@@ -151,12 +159,27 @@ int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len);
 
 
 /**
- * verifies a given context
+ * verifies a context against the verifier's trusted issuer and predicates
  *
  * @param ctx the context to verify
- * @result ZKLAIM_OK on success
+ * @param trusted_issuer_key trusted 32-byte issuer public key, obtained separately
+ *        from the received context (the encoding returned by zklaim_pub2buf)
+ * @param expected verifier-selected predicates, one per payload in payload order;
+ *        all references and operations must match exactly, including noop slots
+ * @param expected_count number of predicates; must be nonzero and match the
+ *        context's payload count and list length
+ * @return ZKLAIM_OK only if the issuer, predicates, signature, and proof pass;
+ *         ZKLAIM_UNTRUSTED_ISSUER for a different embedded issuer key;
+ *         ZKLAIM_UNEXPECTED_PREDICATE for a different predicate or payload count;
+ *         ZKLAIM_INVALID_SIGNATURE or ZKLAIM_INVALID_PROOF for cryptographic failure;
+ *         ZKLAIM_ERROR for NULL arguments, invalid expected operations, an empty
+ *         policy, malformed context storage, or an internal error.
+ *
+ * This replaces the former one-argument API. Do not obtain trusted_issuer_key
+ * or expected from the untrusted context. The context is unchanged.
  */
-int zklaim_ctx_verify(zklaim_ctx *ctx);
+int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_issuer_key[32],
+                      const zklaim_predicate *expected, size_t expected_count);
 
 
 /**
@@ -182,7 +205,11 @@ int zklaim_proof_generate(zklaim_ctx *ctx);
 
 
 /**
- * verifies the proof contained in the given context
+ * verifies only the proof contained in the given context
+ *
+ * This low-level check uses the context's verification key and predicates. It
+ * does not authenticate the issuer or enforce verifier policy; applications
+ * accepting credentials must use zklaim_ctx_verify instead.
  *
  * @param ctx the context to verify
  * @result ZKLAIM_OK on success
