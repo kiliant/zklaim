@@ -34,7 +34,7 @@ void print_sexp(gcry_sexp_t sexp);
 
 
 /**
- * sign a given buffer
+ * sign the exact message bytes using RFC 8032 Ed25519 (no external prehash)
  *
  * @param buf the buffer to sign
  * @param len length of the buffer
@@ -90,7 +90,7 @@ int zklaim_buf2sig(unsigned char *buf, size_t len, gcry_sexp_t *sig);
 
 
 /**
- * generate a private key
+ * generate an Ed25519 private key with explicit EdDSA flags
  *
  * @param priv the private key
  * @return ZKLAIM_OK on success
@@ -131,7 +131,8 @@ int zklaim_buf2pub(unsigned char *buf, size_t len, gcry_sexp_t *pub);
 
 
 /**
- * serialize a private key to a buffer
+ * serialize an Ed25519 private key as public key (32 bytes) || seed (32 bytes)
+ * This is a zklaim-specific container, not PKCS#8 or a legacy ECDSA scalar.
  *
  * @param priv the private key to serialize
  * @param buf the buffer containing the serialized private key
@@ -142,7 +143,7 @@ int zklaim_pk2buf(gcry_sexp_t priv, unsigned char **buf, size_t *len);
 
 
 /**
- * deserialize a private key from a buffer
+ * deserialize public key || Ed25519 seed, checking that the pair agrees
  *
  * @param buf the buffer containing the serialized private key
  * @param len length of buf in bytes

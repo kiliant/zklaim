@@ -59,6 +59,51 @@ jobs:
         working-directory: build/zklaim
         run: ./main
 
+      - name: Generate and verify portable presentation
+        run: |
+          build/zklaim/wire_portability issue wire-${{ matrix.os }}.zkp
+          build/zklaim/wire_portability verify wire-${{ matrix.os }}.zkp
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wire-${{ matrix.os }}
+          path: wire-${{ matrix.os }}.zkp
+
+  portability:
+    name: Wire portability (${{ matrix.platform }})
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux/386, linux/s390x]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: recursive
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wire-*
+          path: fixtures
+          merge-multiple: true
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: s390x
+      - name: Verify Linux and macOS presentations on 32-bit or big-endian Linux
+        run: |
+          docker run --rm --platform '${{ matrix.platform }}' \
+            -v "$PWD:/src" -w /src debian:bookworm-slim sh -ec '
+              apt-get update
+              apt-get install -y --no-install-recommends build-essential cmake pkg-config libgmp-dev libgcrypt20-dev libssl-dev
+              cmake -S . -B build-portable -DCMAKE_BUILD_TYPE=Release -DUSE_ASM=OFF
+              cmake --build build-portable --target wire_portability --parallel 2
+              for fixture in fixtures/*.zkp; do
+                echo "Verifying $fixture"
+                build-portable/zklaim/wire_portability verify "$fixture"
+              done
+            '
+
   container:
     name: Container (Arch Linux)
     runs-on: ubuntu-24.04

@@ -10,6 +10,12 @@ set(CMAKE_POLICY_VERSION_MINIMUM 3.10)
 
 # skip libff's own dependencies, tests and docs
 set(IS_LIBFF_PARENT OFF CACHE INTERNAL "")
+# The protocol fixes one portable libff encoding: standard decimal field
+# elements and uncompressed points. Native limbs and Montgomery residues depend
+# on word size and byte order. Keep libff and its header-only consumers aligned.
+set(BINARY_OUTPUT OFF CACHE BOOL "Protocol uses portable decimal fields" FORCE)
+set(MONTGOMERY_OUTPUT OFF CACHE BOOL "Protocol uses standard field values" FORCE)
+set(USE_PT_COMPRESSION OFF CACHE BOOL "Protocol uses uncompressed points" FORCE)
 add_subdirectory(${LIBFF_DIR} libff EXCLUDE_FROM_ALL)
 
 if(${CURVE} STREQUAL "BN128")
@@ -32,6 +38,7 @@ if(${CURVE} STREQUAL "BN128")
 endif()
 
 add_library(snark INTERFACE)
+target_compile_definitions(snark INTERFACE NO_PT_COMPRESSION=1)
 
 target_include_directories(
   snark

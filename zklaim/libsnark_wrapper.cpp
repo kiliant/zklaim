@@ -192,6 +192,7 @@ size_t libsnark_export(const T &value, unsigned char **buf) {
     *buf = nullptr;
     try {
         stringstream stream;
+        stream.imbue(std::locale::classic());
         stream.exceptions(std::ios::failbit | std::ios::badbit);
         stream << value;
         const string serialized = stream.str();
@@ -228,6 +229,11 @@ int libsnark_import(T *value, unsigned char *buf, size_t blen) {
         if (!stream || !buffer.exhausted()) {
             return ZKLAIM_ERROR;
         }
+        std::ostringstream canonical;
+        canonical.imbue(std::locale::classic());
+        canonical << parsed;
+        const auto encoded = canonical.str();
+        if (encoded.size() != blen || memcmp(encoded.data(), buf, blen) != 0) return ZKLAIM_ERROR;
         *value = std::move(parsed);
         return ZKLAIM_OK;
     } catch (...) {
@@ -245,6 +251,9 @@ int libsnark_import_vk(r1cs_gg_ppzksnark_verification_key<ppT>* vk, unsigned cha
         if (rest.indices[i] >= rest.domain_size() ||
             (i > 0 && rest.indices[i - 1] >= rest.indices[i])) return ZKLAIM_ERROR;
     }
+    if (!vk->gamma_g2.is_well_formed() || !vk->delta_g2.is_well_formed() ||
+        !vk->gamma_ABC_g1.first.is_well_formed()) return ZKLAIM_ERROR;
+    for (const auto &point : rest.values) if (!point.is_well_formed()) return ZKLAIM_ERROR;
     return ZKLAIM_OK;
 }
 
@@ -261,7 +270,8 @@ size_t libsnark_export_proof(r1cs_gg_ppzksnark_proof<ppT> proof, unsigned char *
 }
 
 int libsnark_import_proof(r1cs_gg_ppzksnark_proof<ppT>* proof, unsigned char *buf, size_t blen) {
-    return libsnark_import(proof, buf, blen);
+    if (libsnark_import(proof, buf, blen) != ZKLAIM_OK || !proof->is_well_formed()) return ZKLAIM_ERROR;
+    return ZKLAIM_OK;
 }
 
 // TODO

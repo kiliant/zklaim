@@ -50,9 +50,15 @@ The key uses the 32-byte encoding returned by `zklaim_pub2buf`. Obtain it throug
 
 This replaces the former one-argument `zklaim_ctx_verify(ctx)` API. Migrate callers to pass the trusted key, expected predicates, and predicate count. An issuer mismatch returns `ZKLAIM_UNTRUSTED_ISSUER`; a predicate or payload-count mismatch returns `ZKLAIM_UNEXPECTED_PREDICATE`. `zklaim_proof_verify` is a low-level proof check: it does not authenticate an issuer or enforce the verifier's policy.
 
+`zklaim_ctx_serialize` produces a version 1 presentation with no witness or salt fields, even if the source still contains private attributes. For confidential issuer-to-prover transfer, use `zklaim_ctx_serialize_credential` explicitly. Both kinds are read by `zklaim_ctx_deserialize`. Attribute pre-images use big-endian integers; use `zklaim_set_attr` and `zklaim_get_attr` to access them.
+
+Version 1 also replaces ECDSA on the Ed25519 curve with standard RFC 8032 Ed25519 signatures. Legacy raw-struct messages, keys, and signatures are incompatible: regenerate issuer keys and trusted-setup keys and reissue credentials and proofs. See the [wire format and migration specification](docs/wire-format.md) for field offsets, signature inputs, canonical SNARK encoding, and private-key seed storage.
+
 
 ## Run the Tests
 The (unit) tests are run automatically by GitHub Actions on Linux (x86-64, arm64), macOS (arm64) and in the Arch Linux container for every push to master and every pull request.
+
+CI also exchanges real signed presentation fixtures between Linux and macOS and verifies them on 32-bit x86 and big-endian s390x Linux. To exercise a fixture locally: `build/zklaim/wire_portability issue /tmp/presentation.zkp` followed by `build/zklaim/wire_portability verify /tmp/presentation.zkp`.
 
 To run tests locally, a custom target for this implementation has been implemented:
 

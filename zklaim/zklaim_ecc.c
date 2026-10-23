@@ -18,6 +18,8 @@
 #define ZKLAIM_ECC_C
 
 #include <zklaim/zklaim_ecc.h>
+#include <limits.h>
+#include <string.h>
 
 void print_sexp(gcry_sexp_t sexp) {
     unsigned char* buf;
@@ -28,39 +30,29 @@ void print_sexp(gcry_sexp_t sexp) {
     free(buf);
 }
 
-// Construct signing/verification data while releasing digest temporaries on error.
+// Ed25519 signs the message directly; SHA-512 and nonce derivation are part
+// of EdDSA. Never reinterpret a legacy ECDSA scalar as an Ed25519 seed.
+static int ed25519_key(gcry_sexp_t key) {
+    if (key == NULL) return 0;
+    const char *curve = gcry_pk_get_curve(key, 0, NULL);
+    if (curve == NULL || strcmp(curve, "Ed25519") != 0) return 0;
+    gcry_sexp_t flags = gcry_sexp_find_token(key, "flags", 0);
+    int found = 0;
+    for (int i = 1; i < gcry_sexp_length(flags); ++i) {
+        size_t len = 0;
+        const char *flag = gcry_sexp_nth_data(flags, i, &len);
+        if (flag != NULL && len == 5 && memcmp(flag, "eddsa", 5) == 0) found = 1;
+    }
+    gcry_sexp_release(flags);
+    return found;
+}
+
 static int signature_data(unsigned char *buf, size_t len, gcry_sexp_t *data) {
-    unsigned char *dgst = NULL;
-    gcry_mpi_t dgst_mpi = NULL;
-    gcry_error_t err;
-    int res = 1;
     *data = NULL;
-
-    if ((buf == NULL && len != 0) ||
-        zklaim_calculate_hash(buf, len, &dgst) != 0) {
-        goto cleanup;
-    }
-    err = gcry_mpi_scan(&dgst_mpi, GCRYMPI_FMT_USG, dgst, 32, NULL);
-    if (err != GPG_ERR_NO_ERROR) {
-        goto error;
-    }
-    err = gcry_sexp_build(data, NULL, "(data (flags raw) (value %m))", dgst_mpi);
-    if (err != GPG_ERR_NO_ERROR) {
-        goto error;
-    }
-    res = 0;
-    goto cleanup;
-
-error:
-    fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-cleanup:
-    gcry_mpi_release(dgst_mpi);
-    free(dgst);
-    if (res != 0) {
-        gcry_sexp_release(*data);
-        *data = NULL;
-    }
-    return res;
+    if ((buf == NULL && len != 0) || len > INT_MAX) return 1;
+    return gcry_sexp_build(data, NULL,
+        "(data (flags eddsa) (hash-algo sha512) (value %b))",
+        (int) len, buf != NULL ? buf : (unsigned char *) "") != 0;
 }
 
 int zklaim_sign(unsigned char *buf, size_t len, gcry_sexp_t *sig, gcry_sexp_t priv) {
@@ -70,7 +62,7 @@ int zklaim_sign(unsigned char *buf, size_t len, gcry_sexp_t *sig, gcry_sexp_t pr
         return 1;
     }
     *sig = NULL;
-    if (priv == NULL || signature_data(buf, len, &data)) {
+    if (!ed25519_key(priv) || signature_data(buf, len, &data)) {
         return 1;
     }
     err = gcry_pk_sign(sig, data, priv);
@@ -87,7 +79,10 @@ int zklaim_sign(unsigned char *buf, size_t len, gcry_sexp_t *sig, gcry_sexp_t pr
 int zklaim_verify(unsigned char *buf, size_t len, gcry_sexp_t sig, gcry_sexp_t pub) {
     gcry_sexp_t data = NULL;
     gcry_error_t err;
-    if (sig == NULL || pub == NULL || signature_data(buf, len, &data)) {
+    gcry_sexp_t algorithm = gcry_sexp_find_token(sig, "eddsa", 0);
+    const int eddsa = algorithm != NULL;
+    gcry_sexp_release(algorithm);
+    if (!eddsa || !ed25519_key(pub) || signature_data(buf, len, &data)) {
         return 1;
     }
     err = gcry_pk_verify(sig, data, pub);
@@ -113,106 +108,55 @@ void pad_msb(void *buf, size_t size, size_t target_size)
 }
 
 int zklaim_sig2buf(gcry_sexp_t sig, unsigned char **buf, size_t *len) {
-    size_t rsize, ssize;
-    gcry_sexp_t pub = NULL, r = NULL, s = NULL;
-    gcry_mpi_t r_mpi = NULL, s_mpi = NULL;
-    unsigned char *encoded = NULL;
-    gcry_error_t err;
-    int res = 1;
-
-    if (buf == NULL) {
-        return 1;
-    }
+    if (buf == NULL) return 1;
     *buf = NULL;
     if (len) *len = 0;
-    if (sig == NULL) goto cleanup;
-    pub = gcry_sexp_find_token(sig, "ecdsa", 0);
-    if (pub == NULL) goto cleanup;
-    r = gcry_sexp_find_token(pub, "r", 0);
-    s = gcry_sexp_find_token(pub, "s", 0);
-    if (r == NULL || s == NULL) goto cleanup;
-    r_mpi = gcry_sexp_nth_mpi(r, 1, GCRYMPI_FMT_USG);
-    s_mpi = gcry_sexp_nth_mpi(s, 1, GCRYMPI_FMT_USG);
-    if (r_mpi == NULL || s_mpi == NULL) goto cleanup;
-
-    encoded = (unsigned char*) calloc(1, 64);
-    if (encoded == NULL) goto cleanup;
-    err = gcry_mpi_print(GCRYMPI_FMT_USG, encoded, 32, &rsize, r_mpi);
-    if (err != GPG_ERR_NO_ERROR) goto error;
-    err = gcry_mpi_print(GCRYMPI_FMT_USG, encoded + 32, 32, &ssize, s_mpi);
-    if (err != GPG_ERR_NO_ERROR) goto error;
-    pad_msb(encoded, rsize, 32);
-    pad_msb(encoded + 32, ssize, 32);
-    *buf = encoded;
-    encoded = NULL;
-    if (len) *len = 64;
-    res = 0;
-    goto cleanup;
-
-error:
-    fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-cleanup:
-    free(encoded);
+    gcry_sexp_t eddsa = gcry_sexp_find_token(sig, "eddsa", 0);
+    gcry_sexp_t r = gcry_sexp_find_token(eddsa, "r", 0);
+    gcry_sexp_t s = gcry_sexp_find_token(eddsa, "s", 0);
+    size_t rsize = 0, ssize = 0;
+    const char *rbytes = gcry_sexp_nth_data(r, 1, &rsize);
+    const char *sbytes = gcry_sexp_nth_data(s, 1, &ssize);
+    unsigned char *encoded = NULL;
+    if (rbytes != NULL && sbytes != NULL && rsize == 32 && ssize == 32) {
+        encoded = malloc(64);
+        if (encoded != NULL) {
+            // RFC 8032: the encoded point R followed by little-endian scalar S.
+            memcpy(encoded, rbytes, 32);
+            memcpy(encoded + 32, sbytes, 32);
+        }
+    }
     gcry_sexp_release(r);
     gcry_sexp_release(s);
-    gcry_sexp_release(pub);
-    gcry_mpi_release(r_mpi);
-    gcry_mpi_release(s_mpi);
-    return res;
+    gcry_sexp_release(eddsa);
+    if (encoded == NULL) return 1;
+    *buf = encoded;
+    if (len) *len = 64;
+    return 0;
 }
 
 int zklaim_buf2sig(unsigned char *buf, size_t len, gcry_sexp_t *sig) {
-    gcry_mpi_t r = NULL, s = NULL;
-    gcry_error_t err;
-    int res = 1;
     if (sig == NULL) return 1;
     *sig = NULL;
     if (buf == NULL || len != 64) return 1;
-
-    err = gcry_mpi_scan(&r, GCRYMPI_FMT_USG, buf, 32, NULL);
-    if (err != GPG_ERR_NO_ERROR) goto error;
-    err = gcry_mpi_scan(&s, GCRYMPI_FMT_USG, buf + 32, 32, NULL);
-    if (err != GPG_ERR_NO_ERROR) goto error;
-    err = gcry_sexp_build(sig, NULL, "(sig-val (ecdsa (r %M) (s %M)))", r, s);
-    if (err != GPG_ERR_NO_ERROR) goto error;
-    res = 0;
-    goto cleanup;
-
-error:
-    fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-cleanup:
-    gcry_mpi_release(r);
-    gcry_mpi_release(s);
-    if (res != 0) {
-        gcry_sexp_release(*sig);
-        *sig = NULL;
-    }
-    return res;
+    return gcry_sexp_build(sig, NULL, "(sig-val (eddsa (r %b) (s %b)))",
+                           32, buf, 32, buf + 32) != 0;
 }
 
 int zklaim_gen_pk(gcry_sexp_t *priv) {
-    gcry_error_t err;
-    gcry_sexp_t parms;
-
-    err = gcry_sexp_build(&parms, NULL, "(genkey(ecc(curve Ed25519)))");
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        return 1;
-    }
-
-    err = gcry_pk_genkey(priv, parms);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        return 1;
-    }
-
-    err = gcry_pk_testkey(*priv);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        return 1;
-    }
-
+    if (priv == NULL) return 1;
+    *priv = NULL;
+    gcry_sexp_t parms = NULL;
+    gcry_error_t err = gcry_sexp_build(&parms, NULL,
+        "(genkey (ecc (curve Ed25519) (flags eddsa)))");
+    if (err == 0) err = gcry_pk_genkey(priv, parms);
+    if (err == 0) err = gcry_pk_testkey(*priv);
     gcry_sexp_release(parms);
+    if (err != 0) {
+        gcry_sexp_release(*priv);
+        *priv = NULL;
+        return 1;
+    }
     return 0;
 }
 
@@ -271,7 +215,7 @@ int zklaim_buf2pub(unsigned char *buf, size_t len, gcry_sexp_t *pub) {
     point[0] = 0x40;
     memcpy(point + 1, buf, 32);
 
-    err = gcry_sexp_build(pub, NULL, "(key-data (public-key (ecc (curve Ed25519) (q %b))))", 33, point);
+    err = gcry_sexp_build(pub, NULL, "(key-data (public-key (ecc (curve Ed25519) (flags eddsa) (q %b))))", 33, point);
     if (err != GPG_ERR_NO_ERROR) {
         fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
         return 1;
@@ -280,82 +224,49 @@ int zklaim_buf2pub(unsigned char *buf, size_t len, gcry_sexp_t *pub) {
 }
 
 int zklaim_pk2buf(gcry_sexp_t priv, unsigned char **buf, size_t *len) {
-    size_t sized, point_len;
-    unsigned char *point;
-    gcry_sexp_t d;
-    gcry_mpi_t d_mpi;
-    gcry_error_t err;
-
-    if (buf == NULL || zklaim_pub2buf(priv, &point, &point_len)) {
-        return 1;
+    if (buf == NULL) return 1;
+    *buf = NULL;
+    if (len) *len = 0;
+    if (!ed25519_key(priv)) return 1;
+    unsigned char *point = NULL;
+    size_t point_len = 0;
+    if (zklaim_pub2buf(priv, &point, &point_len)) return 1;
+    gcry_sexp_t d = gcry_sexp_find_token(priv, "d", 0);
+    size_t seed_len = 0;
+    const char *seed = gcry_sexp_nth_data(d, 1, &seed_len);
+    unsigned char *encoded = NULL;
+    if (seed != NULL && seed_len == 32) {
+        encoded = malloc(64);
+        if (encoded != NULL) {
+            memcpy(encoded, point, 32);
+            memcpy(encoded + 32, seed, 32);
+        }
     }
-    d = gcry_sexp_find_token(priv, "d", 0);
-    if (d == NULL) {
-        free(point);
-        return 1;
-    }
-    d_mpi = gcry_sexp_nth_mpi(d, 1, GCRYMPI_FMT_USG);
-    if (d_mpi == NULL) {
-        free(point);
-        gcry_sexp_release(d);
-        return 1;
-    }
-
-    *buf = (unsigned char*) malloc(64);
-    if (*buf == NULL) {
-        free(point);
-        gcry_sexp_release(d);
-        gcry_mpi_release(d_mpi);
-        return 1;
-    }
-    memcpy(*buf, point, point_len);
     free(point);
-    err = gcry_mpi_print(GCRYMPI_FMT_USG, *buf + 32, 32, &sized, d_mpi);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        free(*buf);
-        *buf = NULL;
-        gcry_sexp_release(d);
-        gcry_mpi_release(d_mpi);
-        return 1;
-    }
-
-    pad_msb(*buf+32, sized, 32);
-
-    if (len)
-        *len = 64;
-
     gcry_sexp_release(d);
-    gcry_mpi_release(d_mpi);
-
+    if (encoded == NULL) return 1;
+    *buf = encoded;
+    if (len) *len = 64;
     return 0;
 }
 
 int zklaim_buf2pk(unsigned char *buf, size_t len, gcry_sexp_t *priv) {
-    gcry_mpi_t d;
-    gcry_error_t err;
-    if (buf == NULL || len != 64 || priv == NULL) {
-        return 1;
-    }
+    if (priv == NULL) return 1;
+    *priv = NULL;
+    if (buf == NULL || len != 64) return 1;
     unsigned char point[33];
     point[0] = 0x40;
     memcpy(point + 1, buf, 32);
-
-    err = gcry_mpi_scan(&d, GCRYMPI_FMT_USG, buf + 32, 32, NULL);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
+    gcry_error_t err = gcry_sexp_build(priv, NULL,
+        "(key-data (public-key (ecc (curve Ed25519) (flags eddsa) (q %b)))"
+        " (private-key (ecc (curve Ed25519) (flags eddsa) (q %b) (d %b))))",
+        33, point, 33, point, 32, buf + 32);
+    if (err == 0) err = gcry_pk_testkey(*priv);
+    if (err != 0) {
+        gcry_sexp_release(*priv);
+        *priv = NULL;
         return 1;
     }
-
-    err = gcry_sexp_build(priv, NULL, "(key-data (public-key (ecc (curve Ed25519) (q %b))) (private-key (ecc (curve Ed25519) (q %b) (d %M))))", 33, point, 33, point, d);
-    if (err != GPG_ERR_NO_ERROR) {
-        fprintf(stderr, "[%s (%d): %s] error occurred: %s\n", __FILE__, __LINE__, gcry_strsource(err), gcry_strerror(err));
-        gcry_mpi_release(d);
-
-        return 1;
-    }
-
-    gcry_mpi_release(d);
     return 0;
 }
 

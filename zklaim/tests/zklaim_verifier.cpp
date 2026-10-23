@@ -23,9 +23,9 @@ protected:
     static std::vector<unsigned char> presentation;
     ctx_ptr received{nullptr, zklaim_ctx_free};
 
-    static std::vector<unsigned char> serialize(zklaim_ctx *ctx) {
+    static std::vector<unsigned char> serialize(zklaim_ctx *ctx, bool credential = false) {
         unsigned char *data = nullptr;
-        const size_t len = zklaim_ctx_serialize(ctx, &data);
+        const size_t len = credential ? zklaim_ctx_serialize_credential(ctx, &data) : zklaim_ctx_serialize(ctx, &data);
         std::unique_ptr<unsigned char, decltype(&free)> storage(data, free);
         if (len == 0 || data == nullptr) return {};
         return std::vector<unsigned char>(data, data + len);
@@ -71,7 +71,7 @@ public:
         ASSERT_EQ(ZKLAIM_OK, zklaim_proof_generate(issuer.get()));
 
         // Keep the issuer's witnesses for the weaker-predicate regression.
-        auto issued = serialize(issuer.get());
+        auto issued = serialize(issuer.get(), true);
         ASSERT_FALSE(issued.empty());
         ctx_ptr blinded(zklaim_context_new(), zklaim_ctx_free);
         ASSERT_NE(nullptr, blinded);
@@ -158,7 +158,7 @@ TEST_F(zklaim_verifier, rejects_missing_extra_and_reordered_predicates) {
 }
 
 TEST_F(zklaim_verifier, rejects_valid_proofs_for_weaker_prover_selected_predicates) {
-    auto issued = serialize(issuer.get());
+    auto issued = serialize(issuer.get(), true);
     ctx_ptr prover(zklaim_context_new(), zklaim_ctx_free);
     ASSERT_NE(nullptr, prover);
     ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_deserialize(prover.get(), issued.data(), issued.size()));
