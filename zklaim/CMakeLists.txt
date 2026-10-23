@@ -67,7 +67,6 @@ install(
     FILES_MATCHING
     PATTERN "*.h"
     PATTERN "tests" EXCLUDE
-    PATTERN "other" EXCLUDE
 )
 
 install(
