@@ -58,7 +58,6 @@ protected:
                                               ctx_ptr *witnesses = nullptr) {
         ctx_ptr ctx(zklaim_context_new(), zklaim_ctx_free);
         if (!ctx) return {};
-        memcpy(ctx->pub_key, issuer_key, 32);
         for (size_t i = 0; i < 2; ++i) {
             zklaim_payload pl = {};
             memcpy(pl.data_ref, policy[i].data_ref, sizeof(pl.data_ref));
@@ -68,7 +67,7 @@ protected:
             zklaim_add_pl(ctx.get(), pl);
         }
         zklaim_hash_ctx(ctx.get());
-        if (zklaim_ctx_sign(ctx.get(), priv) != ZKLAIM_OK ||
+        if (zklaim_ctx_sign(ctx.get(), priv) != ZKLAIM_OK || memcmp(ctx->pub_key, issuer_key, 32) != 0 ||
             zklaim_proof_generate(ctx.get(), keys().pk, keys().pk_size, nonce) != ZKLAIM_OK) return {};
         auto blob = serialize(ctx.get());
         if (witnesses) *witnesses = std::move(ctx);
@@ -127,8 +126,8 @@ TEST_F(zklaim_verifier, rejects_self_issued_credentials_and_relabelled_issuer_ke
     std::unique_ptr<unsigned char, decltype(&free)> key_storage(key, free);
     ASSERT_EQ(sizeof(trusted_key), key_size);
     ASSERT_NE(0, memcmp(trusted_key, key, key_size));
-    memcpy(received->pub_key, key, key_size);
     ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_sign(received.get(), attacker.value));
+    EXPECT_EQ(0, memcmp(received->pub_key, key, key_size));
 
     // This is a fully valid proof and signature under the attacker's own key.
     EXPECT_EQ(ZKLAIM_OK, verify_with(received.get(), key, policy, 2));

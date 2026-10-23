@@ -50,13 +50,11 @@ int worker() {
     printf("[ISSUER] initializing context\n");
     zklaim_ctx *ctx = zklaim_context_new();
 
-    if (sizeof(ctx->pub_key) != publen) {
+    if (publen != 32) {
         printf("size mismatch!");
         return 1;
     }
 
-    // TODO: there should be a zklaim method for this
-    memcpy(ctx->pub_key, pubbuf, sizeof(ctx->pub_key));
     // The verifier obtains this key from its issuer configuration, separately
     // from the prover's serialized context. This demo uses the issuer above.
     unsigned char trusted_issuer_key[32];
@@ -69,8 +67,6 @@ int worker() {
         {{20, 0, 0, 0, 0},
          {zklaim_greater_or_eq, zklaim_noop, zklaim_noop, zklaim_noop, zklaim_noop}}
     };
-
-    //print_sexp(pub);
 
     /*
      * - 2 -

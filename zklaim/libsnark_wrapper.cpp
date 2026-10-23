@@ -14,9 +14,6 @@
  * along with zklaim. If not, see https://www.gnu.org/licenses/.
  */
 
-#ifndef ZKLAIM_WRAPPER_CPP
-#define ZKLAIM_WRAPPER_CPP
-
 #define ppT default_r1cs_ppzksnark_pp
 //#define DEBUG 1
 
@@ -35,57 +32,20 @@
 #include <libsnark/common/default_types/r1cs_ppzksnark_pp.hpp>
 #include <libff/common/utils.hpp>
 
-#include "snark.cpp"
+#include "snark.hpp"
 
 extern "C" {
 #include <zklaim/zklaim.h>
 }
 
-// this is probably not needed, as cmake takes care of correct compilation
-// and linkage:
-//#ifdef __cplusplus
-//extern "C" {
-//#endif
-
 extern "C" {
     int libsnark_trusted_setup(size_t, unsigned char**, size_t*, unsigned char**, size_t*);
     int libsnark_prove(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
     int libsnark_verify(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
-    int libsnark_import_proof(zklaim_proof**, unsigned char*, size_t);
-    void libsnark_free(zklaim_proving_key*, zklaim_verification_key*, zklaim_proof*);
-    size_t libsnark_export_proof(zklaim_proof*, unsigned char**);
 }
-
-typedef std::vector<bool> bit_vector;
 
 using namespace std;
 using namespace libsnark;
-
-/**
- * this is needed to convert a memory region of length *len* to a
- * std::vector<bool> bit_vector
- */
-bit_vector memtobv(const unsigned char* mem, size_t len) {
-    bit_vector res(len);
-    size_t wordsize = 8;
-    for (size_t i = 0; i < len/wordsize; i++) {
-        for (size_t k=0; k<wordsize; k++) {
-            res[i*wordsize+k] = (*(mem+i) & (1ul << (8-1-k)));
-        }
-    }
-    return res;
-}
-
-bit_vector memtobv2(unsigned char* mem, size_t len) {
-    bit_vector res(len);
-    size_t wordsize = 8;
-    for (size_t i = 0; i < len/wordsize; i++) {
-        for (size_t k=0; k<wordsize; k++) {
-            res[i*wordsize+k] = (*(mem+i) & (1ul << (k)));
-        }
-    }
-    return res;
-}
 
 // libff's decimal bigint reader assumes a digit-only token that fits its fixed
 // limb array. Check formatted reads before that reader sees them; binary reads
@@ -159,32 +119,6 @@ class bounded_num_get : public std::num_get<char> {
 public:
     explicit bounded_num_get(size_t bytes) : limit(bytes) {}
 };
-
-struct zklaim_proving_key {
-    r1cs_gg_ppzksnark_proving_key<ppT> pk;
-};
-
-struct zklaim_verification_key {
-    r1cs_gg_ppzksnark_verification_key<ppT> vk;
-};
-
-struct zklaim_proof {
-    r1cs_gg_ppzksnark_proof<ppT> proof;
-};
-
-void libsnark_free(zklaim_proving_key* pk, zklaim_verification_key* vk, zklaim_proof* proof) {
-    if (pk) {
-        free(pk);
-    }
-
-    if (vk) {
-        free(vk);
-    }
-
-    if (proof) {
-        free(proof);
-    }
-}
 
 template<typename T>
 size_t libsnark_export(const T &value, unsigned char **buf) {
@@ -374,8 +308,3 @@ int libsnark_verify(zklaim_ctx *ctx, const unsigned char *vk_buf, size_t vk_size
     return ZKLAIM_ERROR;
 }
 
-//#ifdef __cplusplus
-//}
-//#endif
-
-#endif // ZKLAIM_WRAPPER_CPP

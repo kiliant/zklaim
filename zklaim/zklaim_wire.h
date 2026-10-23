@@ -2,6 +2,7 @@
 #define ZKLAIM_WIRE_H
 
 #include <stdint.h>
+#include <zklaim/zklaim_export.h>
 
 #define ZKLAIM_WIRE_VERSION 2
 #define ZKLAIM_WIRE_HEADER_SIZE 88
@@ -34,7 +35,7 @@ static inline uint32_t zklaim_load_u32(const unsigned char *in) {
 extern "C" {
 #endif
 /** Curve identifier of the linked library, independent of caller flags. */
-unsigned char zklaim_wire_curve(void);
+ZKLAIM_API unsigned char zklaim_wire_curve(void);
 #ifdef __cplusplus
 }
 #endif

@@ -23,14 +23,7 @@
 #include <unistd.h>
 
 #include <zklaim/zklaim_hash.h>
-
-
-/**
- * prints a given s-expression
- *
- * @param sexp the expression to pring
- */
-void print_sexp(gcry_sexp_t sexp);
+#include <zklaim/zklaim_export.h>
 
 
 /**
@@ -42,7 +35,7 @@ void print_sexp(gcry_sexp_t sexp);
  * @param priv the private key used for signature
  * @return ZKLAIM_OK on success
  */
-int zklaim_sign(unsigned char *buf, size_t len, gcry_sexp_t *sig, gcry_sexp_t priv);
+ZKLAIM_API int zklaim_sign(unsigned char *buf, size_t len, gcry_sexp_t *sig, gcry_sexp_t priv);
 
 
 /**
@@ -54,17 +47,7 @@ int zklaim_sign(unsigned char *buf, size_t len, gcry_sexp_t *sig, gcry_sexp_t pr
  * @param pub correspondin public key
  * @return ZKLAIM_OK on success
  */
-int zklaim_verify(unsigned char *buf, size_t len, gcry_sexp_t sig, gcry_sexp_t pub);
-
-
-/**
- * needed to pad msb to target length
- *
- * @param buf the buffer
- * @param size the current size
- * @param target_size the desired size to pad to
- */
-void pad_msb(void *buf, size_t size, size_t target_size);
+ZKLAIM_API int zklaim_verify(unsigned char *buf, size_t len, gcry_sexp_t sig, gcry_sexp_t pub);
 
 
 /**
@@ -75,7 +58,7 @@ void pad_msb(void *buf, size_t size, size_t target_size);
  * @param len the length of buf in bytes
  * @return ZKLAIM_OK on success
  */
-int zklaim_sig2buf(gcry_sexp_t sig, unsigned char **buf, size_t *len);
+ZKLAIM_API int zklaim_sig2buf(gcry_sexp_t sig, unsigned char **buf, size_t *len);
 
 
 /**
@@ -86,7 +69,7 @@ int zklaim_sig2buf(gcry_sexp_t sig, unsigned char **buf, size_t *len);
  * @param sig the signature
  * @return ZKLAIM_OK on success
  */
-int zklaim_buf2sig(unsigned char *buf, size_t len, gcry_sexp_t *sig);
+ZKLAIM_API int zklaim_buf2sig(unsigned char *buf, size_t len, gcry_sexp_t *sig);
 
 
 /**
@@ -95,7 +78,7 @@ int zklaim_buf2sig(unsigned char *buf, size_t len, gcry_sexp_t *sig);
  * @param priv the private key
  * @return ZKLAIM_OK on success
  */
-int zklaim_gen_pk(gcry_sexp_t *priv);
+ZKLAIM_API int zklaim_gen_pk(gcry_sexp_t *priv);
 
 
 /**
@@ -105,7 +88,7 @@ int zklaim_gen_pk(gcry_sexp_t *priv);
  * @param pub the public key
  * @return ZKLAIM_OK on success
  */
-int zklaim_get_pub(gcry_sexp_t priv, gcry_sexp_t *pub);
+ZKLAIM_API int zklaim_get_pub(gcry_sexp_t priv, gcry_sexp_t *pub);
 
 
 /**
@@ -116,7 +99,7 @@ int zklaim_get_pub(gcry_sexp_t priv, gcry_sexp_t *pub);
  * @param len the length of buf in bytes
  * @return ZKLAIM_OK on success
  */
-int zklaim_pub2buf(gcry_sexp_t pub, unsigned char **buf, size_t *len);
+ZKLAIM_API int zklaim_pub2buf(gcry_sexp_t pub, unsigned char **buf, size_t *len);
 
 
 /**
@@ -127,7 +110,7 @@ int zklaim_pub2buf(gcry_sexp_t pub, unsigned char **buf, size_t *len);
  * @param pub the public key
  * @return ZKLAIM_OK on success
  */
-int zklaim_buf2pub(unsigned char *buf, size_t len, gcry_sexp_t *pub);
+ZKLAIM_API int zklaim_buf2pub(unsigned char *buf, size_t len, gcry_sexp_t *pub);
 
 
 /**
@@ -139,7 +122,7 @@ int zklaim_buf2pub(unsigned char *buf, size_t len, gcry_sexp_t *pub);
  * @param len length of buf in bytes
  * @return ZKLAIM_OK on success
  */
-int zklaim_pk2buf(gcry_sexp_t priv, unsigned char **buf, size_t *len);
+ZKLAIM_API int zklaim_pk2buf(gcry_sexp_t priv, unsigned char **buf, size_t *len);
 
 
 /**
@@ -150,6 +133,6 @@ int zklaim_pk2buf(gcry_sexp_t priv, unsigned char **buf, size_t *len);
  * @param priv the private key
  * @return ZKLAIM_OK on success
  */
-int zklaim_buf2pk(unsigned char *buf, size_t len, gcry_sexp_t *priv);
+ZKLAIM_API int zklaim_buf2pk(unsigned char *buf, size_t len, gcry_sexp_t *priv);
 
 #endif // ZKLAIM_ECC_H

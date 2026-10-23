@@ -4,8 +4,9 @@
 #include <map>
 #include <memory>
 #include <fcntl.h>
+#include <openssl/sha.h>
 #include <sys/resource.h>
-#include "../snark.cpp"
+#include "../snark.hpp"
 extern "C" {
 #include <zklaim/zklaim.h>
 }
@@ -284,10 +285,11 @@ TEST(zklaim, trusted_setup_rejects_invalid_arguments_without_output) {
 static int context_sign_failure_result(gcry_sexp_t key) {
     zklaim_ctx ctx = {};
     memset(ctx.signature, 0xa5, sizeof(ctx.signature));
-    unsigned char original[sizeof(ctx.signature)];
-    memcpy(original, ctx.signature, sizeof(original));
+    memset(ctx.pub_key, 0x5a, sizeof(ctx.pub_key));
+    zklaim_ctx original = ctx;
     if (zklaim_ctx_sign(&ctx, key) != ZKLAIM_ERROR) return 1;
-    if (memcmp(original, ctx.signature, sizeof(original)) != 0) return 2;
+    if (memcmp(original.signature, ctx.signature, sizeof(ctx.signature)) != 0) return 2;
+    if (memcmp(original.pub_key, ctx.pub_key, sizeof(ctx.pub_key)) != 0) return 3;
     return 0;
 }
 
@@ -613,7 +615,7 @@ TEST(zklaim, can_handle_three_payloads) {
 
 TEST(zklaim, rejects_contexts_without_payloads) {
     int (*operations[])(zklaim_ctx *, const unsigned char *, size_t, const unsigned char *) = {
-        zklaim_proof_generate, libsnark_prove, zklaim_proof_verify, libsnark_verify
+        zklaim_proof_generate, zklaim_proof_verify
     };
     const auto &keys = zklaim_keys_for(1);
     zklaim_wrap_payload_ctx payload = {};
@@ -632,9 +634,9 @@ TEST(zklaim, rejects_contexts_without_payloads) {
         payload.next = state == 3 ? &second : nullptr;
         unsigned char original[sizeof(ctx)];
         memcpy(original, &ctx, sizeof(ctx));
-        for (size_t i = 0; i < 4; ++i) {
-            const unsigned char *key = i < 2 ? keys.pk : keys.vk;
-            const size_t key_size = i < 2 ? keys.pk_size : keys.vk_size;
+        for (size_t i = 0; i < 2; ++i) {
+            const unsigned char *key = i == 0 ? keys.pk : keys.vk;
+            const size_t key_size = i == 0 ? keys.pk_size : keys.vk_size;
             EXPECT_EQ(ZKLAIM_ERROR, operations[i](&ctx, key, key_size, zklaim_test_nonce));
             EXPECT_EQ(0, memcmp(original, &ctx, sizeof(ctx)));
         }
@@ -662,19 +664,16 @@ static int null_argument_result() {
     ctx.pl_ctx_head = &payload;
     ctx.num_of_payloads = 1;
     unsigned char key = 0;
-    unsigned char *pk = nullptr;
-    unsigned char *vk = nullptr;
-    size_t pk_size = 0;
-    size_t vk_size = 0;
     if (zklaim_trusted_setup(1, NULL, NULL, NULL, NULL) != ZKLAIM_ERROR ||
-        libsnark_trusted_setup(0, &pk, &pk_size, &vk, &vk_size) != ZKLAIM_ERROR ||
         zklaim_proof_generate(NULL, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
         zklaim_proof_generate(&ctx, NULL, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
         zklaim_proof_generate(&ctx, &key, 1, NULL) != ZKLAIM_ERROR ||
-        libsnark_prove(NULL, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
-        zklaim_proof_verify(&ctx, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
-        libsnark_verify(&ctx, NULL, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
-        libsnark_verify(&ctx, &key, 1, NULL) != ZKLAIM_ERROR) return 1;
+        zklaim_proof_verify(NULL, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
+        zklaim_proof_verify(&ctx, &key, 1, zklaim_test_nonce) != ZKLAIM_ERROR) return 1;
+    ctx.proof = &key;
+    ctx.proof_size = 1;
+    if (zklaim_proof_verify(&ctx, NULL, 1, zklaim_test_nonce) != ZKLAIM_ERROR ||
+        zklaim_proof_verify(&ctx, &key, 1, NULL) != ZKLAIM_ERROR) return 2;
     return 0;
 }
 
@@ -729,14 +728,14 @@ static bool zklaim_test_circuit_accepts(uint64_t ref, enum zklaim_test_forgery f
     switch (forgery) {
         case forge_value:
             // claim attribute #0 is 99 instead of the hashed (and signed) 15
-            pb.val(*g.data0[0]) = FieldT(99);
+            pb.val(g.data[0][0]) = FieldT(99);
             pb.val(g.plvars[0]) = FieldT(99);
-            g.data0_cgs[0]->generate_r1cs_witness();
+            g.data_cgs[0][0]->generate_r1cs_witness();
             break;
         case forge_reference:
             // compare against 10 instead of the public reference value
             pb.val(g.refvals[0]) = FieldT(10);
-            g.data0_cgs[0]->generate_r1cs_witness();
+            g.data_cgs[0][0]->generate_r1cs_witness();
             break;
         case forge_operation:
             // turn the public ">=" into "noop"

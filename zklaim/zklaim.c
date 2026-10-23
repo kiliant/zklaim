@@ -17,16 +17,14 @@
 /**
  * zklaim implementation
  */
-#ifndef ZKLAIM_C
-#define ZKLAIM_C
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <zklaim/zklaim.h>
 #include <zklaim/zklaim_ecc.h>
 #include <zklaim/zklaim_hash.h>
-#include <openssl/sha.h>
 #include <stdio.h>
 #include <string.h>
 #include <zklaim/zklaim_wire.h>
@@ -45,6 +43,15 @@ unsigned char zklaim_wire_curve(void) {
 #else
     return 0;
 #endif
+}
+
+// implemented in libsnark_wrapper.cpp
+int libsnark_trusted_setup(size_t, unsigned char**, size_t*, unsigned char**, size_t*);
+int libsnark_prove(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
+int libsnark_verify(zklaim_ctx*, const unsigned char*, size_t, const unsigned char*);
+
+static void sha256(const unsigned char *buf, size_t len, unsigned char digest[32]) {
+    gcry_md_hash_buffer(GCRY_MD_SHA256, digest, buf, len);
 }
 
 zklaim_ctx* zklaim_context_new() {
@@ -113,7 +120,7 @@ void zklaim_hash_pl(zklaim_payload *pl) {
     gcry_randomize(pl->salt, sizeof(pl->salt), GCRY_STRONG_RANDOM);
     // copy over salt to pre
     memcpy(pl->pre + ZKLAIM_MAX_PAYLOAD_ATTRIBUTES * sizeof(uint64_t), pl->salt, sizeof(pl->salt));
-    SHA256((unsigned char*) pl->pre, sizeof(pl->pre), pl->hash);
+    sha256(pl->pre, sizeof(pl->pre), pl->hash);
 }
 
 void zklaim_hash_ctx(zklaim_ctx *ctx) {
@@ -125,7 +132,7 @@ void zklaim_hash_ctx(zklaim_ctx *ctx) {
     }
 }
 
-const char* zklaim_parse_op (enum zklaim_op e) {
+static const char* zklaim_parse_op (enum zklaim_op e) {
     // TODO: see compilation warning
     switch (e) {
         case zklaim_noop:
@@ -309,15 +316,6 @@ int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_issuer_key[32
         return ZKLAIM_ERROR;
     }
 
-    //unsigned char *md;
-    //zklaim_calculate_hash(buf, total_length, &md);
-    //printf("-> verifying hash (%zu): ", total_length);
-    //print_hex(md, 32);
-    //printf("\n------\n");
-    //print_hex(buf, total_length);
-    //free(md);
-    //printf("\n");
-
     if (zklaim_verify(buf, total_length, sig, pub)) {
         free(buf);
         gcry_sexp_release(pub);
@@ -346,14 +344,17 @@ int zklaim_ctx_sign(zklaim_ctx *ctx, gcry_sexp_t priv) {
     int res = ZKLAIM_ERROR;
     unsigned char *buf = NULL;
     unsigned char *sigbuf = NULL;
+    unsigned char *key = NULL;
     size_t total_length = 0;
     size_t sigsize = 0;
+    size_t key_size = 0;
     gcry_sexp_t sig = NULL;
 
     if (ctx == NULL || priv == NULL) {
         return ZKLAIM_ERROR;
     }
-    if (plain_ctx(ctx, &buf, &total_length) != ZKLAIM_OK ||
+    if (zklaim_pub2buf(priv, &key, &key_size) != ZKLAIM_OK || key_size != sizeof(ctx->pub_key) ||
+        plain_ctx(ctx, &buf, &total_length) != ZKLAIM_OK ||
         zklaim_sign(buf, total_length, &sig, priv) != ZKLAIM_OK ||
         zklaim_sig2buf(sig, &sigbuf, &sigsize) != ZKLAIM_OK ||
         sigbuf == NULL || sigsize != sizeof(ctx->signature)) {
@@ -361,11 +362,13 @@ int zklaim_ctx_sign(zklaim_ctx *ctx, gcry_sexp_t priv) {
     }
 
     memcpy(ctx->signature, sigbuf, sizeof(ctx->signature));
+    memcpy(ctx->pub_key, key, sizeof(ctx->pub_key));
     res = ZKLAIM_OK;
 
 cleanup:
     gcry_sexp_release(sig);
     free(sigbuf);
+    free(key);
     free(buf);
     return res;
 }
@@ -387,8 +390,8 @@ int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len) {
     if (memcmp(buf, "ZKLM", 4) != 0 || buf[4] != 0 || buf[5] != ZKLAIM_WIRE_VERSION ||
         (buf[6] != ZKLAIM_WIRE_CREDENTIAL && buf[6] != ZKLAIM_WIRE_PRESENTATION) ||
         buf[7] != zklaim_wire_curve() || zklaim_load_u64(buf + 16) != 0) return ZKLAIM_ERROR;
-    unsigned char digest[SHA256_DIGEST_LENGTH];
-    SHA256(buf, 56, digest);
+    unsigned char digest[32];
+    sha256(buf, 56, digest);
     if (memcmp(digest, buf + 56, sizeof(digest)) != 0) return ZKLAIM_ERROR;
     const int credential = buf[6] == ZKLAIM_WIRE_CREDENTIAL;
     const size_t payload_size = credential ? ZKLAIM_WIRE_CREDENTIAL_PAYLOAD_SIZE : ZKLAIM_WIRE_PUBLIC_PAYLOAD_SIZE;
@@ -472,7 +475,7 @@ static size_t serialize_context(zklaim_ctx *ctx, unsigned char **buf, int creden
     zklaim_store_u32(encoded + 8, (uint32_t) ctx->num_of_payloads);
     zklaim_store_u32(encoded + 12, (uint32_t) ctx->proof_size);
     memcpy(encoded + 24, ctx->pub_key, 32);
-    SHA256(encoded, 56, encoded + 56);
+    sha256(encoded, 56, encoded + 56);
     unsigned char *cursor = encoded + ZKLAIM_WIRE_HEADER_SIZE;
     const zklaim_wrap_payload_ctx *node = ctx->pl_ctx_head;
     for (size_t i = 0; i < ctx->num_of_payloads; ++i, cursor += payload_size) {
@@ -509,11 +512,3 @@ size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf) {
 size_t zklaim_ctx_serialize_credential(zklaim_ctx *ctx, unsigned char **buf) {
     return serialize_context(ctx, buf, 1);
 }
-
-// test method for wrapping a c++ function in c
-int zklaim_test() {
-    return 0;
-    //return libsnark_verify();
-}
-
-#endif

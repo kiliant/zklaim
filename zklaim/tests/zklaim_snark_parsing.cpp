@@ -80,7 +80,6 @@ TEST(zklaim_snark_parsing, rejects_invalid_artifacts_at_the_c_boundary) {
     EXPECT_EQ(ZKLAIM_ERROR, attempt(1, reinterpret_cast<const unsigned char *>(bad_vector.data()), bad_vector.size()));
     EXPECT_EQ(ZKLAIM_OK, zklaim_proof_verify(ctx.get(), keys.vk, keys.vk_size, zklaim_test_nonce));
     EXPECT_EQ(ZKLAIM_ERROR, zklaim_proof_verify(nullptr, keys.vk, keys.vk_size, zklaim_test_nonce));
-    EXPECT_EQ(ZKLAIM_ERROR, libsnark_verify(nullptr, keys.vk, keys.vk_size, zklaim_test_nonce));
 }
 
 TEST(zklaim_snark_parsing, rejects_canonical_proving_keys_with_inconsistent_vectors) {

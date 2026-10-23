@@ -14,8 +14,8 @@
  * along with zklaim. If not, see https://www.gnu.org/licenses/.
  */
 
-#ifndef SNARK_CPP
-#define SNARK_CPP
+#ifndef ZKLAIM_SNARK_HPP
+#define ZKLAIM_SNARK_HPP
 
 #include <libsnark/gadgetlib1/gadgets/basic_gadgets.hpp>
 #include <libsnark/zk_proof_systems/ppzksnark/r1cs_gg_ppzksnark/r1cs_gg_ppzksnark.hpp>
@@ -28,11 +28,7 @@
 using namespace libsnark;
 using namespace std;
 
-#include "zklaim_gadget.cpp"
-
-//#include "libsnark_wrapper.cpp"
-
-//bit_vector memtobv(unsigned char, size_t);
+#include "zklaim_gadget.hpp"
 
 extern "C" {
 #include <zklaim/zklaim.h>
@@ -180,4 +176,4 @@ bool generate_proof(const r1cs_gg_ppzksnark_proving_key<ppzksnark_ppT> &proving_
     return true;
 }
 
-#endif // SNARK_CPP
+#endif // ZKLAIM_SNARK_HPP

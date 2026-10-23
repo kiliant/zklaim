@@ -14,9 +14,6 @@
  * along with zklaim. If not, see https://www.gnu.org/licenses/.
  */
 
-#ifndef ZKLAIM_ECC_C
-#define ZKLAIM_ECC_C
-
 #include <zklaim/zklaim_ecc.h>
 #include <limits.h>
 #include <string.h>
@@ -45,15 +42,6 @@ static int seed_matches_public(const unsigned char *point, const unsigned char *
                         len == 32 && memcmp(derived, point, 32) == 0;
     EVP_PKEY_free(key);
     return matches;
-}
-
-void print_sexp(gcry_sexp_t sexp) {
-    unsigned char* buf;
-    size_t size = gcry_sexp_sprint(sexp, GCRYSEXP_FMT_DEFAULT, NULL, 0);
-    buf = (unsigned char*) calloc(1, size);
-    gcry_sexp_sprint(sexp, GCRYSEXP_FMT_DEFAULT, buf, size);
-    printf("%s", buf);
-    free(buf);
 }
 
 // Ed25519 signs the message directly; SHA-512 and nonce derivation are part
@@ -120,19 +108,6 @@ int zklaim_verify(unsigned char *buf, size_t len, gcry_sexp_t sig, gcry_sexp_t p
         return 1;
     }
     return 0;
-}
-
-// needed to pad msb to target length
-void pad_msb(void *buf, size_t size, size_t target_size)
-{
-    char *p = (char*) buf;
-
-    if (size < target_size){
-        // shift
-        memmove(&p[target_size - size], buf, size);
-        // set msbs to 0
-        memset(buf, 0, target_size - size);
-    }
 }
 
 int zklaim_sig2buf(gcry_sexp_t sig, unsigned char **buf, size_t *len) {
@@ -299,5 +274,3 @@ int zklaim_buf2pk(unsigned char *buf, size_t len, gcry_sexp_t *priv) {
     }
     return 0;
 }
-
-#endif // ZKLAIM_ECC_C

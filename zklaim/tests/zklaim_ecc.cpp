@@ -487,6 +487,7 @@ TEST(zklaim_ecc, context_signature_matches_specified_domain_and_lengths) {
     ctx.num_of_payloads = 1;
     ASSERT_EQ(ZKLAIM_OK, zklaim_ctx_sign(&ctx, key));
     gcry_sexp_release(key);
+    EXPECT_EQ(0, memcmp(pub.data(), ctx.pub_key, sizeof(ctx.pub_key)));
     // The verification key is pinned by verifiers and not part of the signature.
     std::vector<unsigned char> signed_bytes = {
         'Z','K','S','G', 0,2, 1,zklaim_wire_curve(), 0,0,0,1
