@@ -727,14 +727,14 @@ static bool zklaim_test_circuit_accepts(uint64_t ref, enum zklaim_test_forgery f
     switch (forgery) {
         case forge_value:
             // claim attribute #0 is 99 instead of the hashed (and signed) 15
-            pb.val(*g.data0[0]) = FieldT(99);
+            pb.val(g.data[0][0]) = FieldT(99);
             pb.val(g.plvars[0]) = FieldT(99);
-            g.data0_cgs[0]->generate_r1cs_witness();
+            g.data_cgs[0][0]->generate_r1cs_witness();
             break;
         case forge_reference:
             // compare against 10 instead of the public reference value
             pb.val(g.refvals[0]) = FieldT(10);
-            g.data0_cgs[0]->generate_r1cs_witness();
+            g.data_cgs[0][0]->generate_r1cs_witness();
             break;
         case forge_operation:
             // turn the public ">=" into "noop"
