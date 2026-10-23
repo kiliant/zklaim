@@ -22,6 +22,7 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <stddef.h>
 #include <zklaim/zklaim.h>
 #include <zklaim/zklaim_ecc.h>
 #include <zklaim/zklaim_hash.h>
@@ -61,8 +62,8 @@ int zklaim_proof_generate(zklaim_ctx *ctx) {
 
 int zklaim_proof_verify(zklaim_ctx *ctx) {
     // check if proof is present
-    if (ctx->proof == NULL)
-        return 1;
+    if (ctx == NULL || ctx->proof == NULL)
+        return ZKLAIM_ERROR;
     return libsnark_verify(ctx);
 }
 
@@ -301,70 +302,97 @@ cleanup:
 }
 
 int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len) {
-    // 0 - extract zklaim header and set counts and sizes
-    unsigned char *buf_iterator = buf;
-    size_t total_length, num_of_payloads;
-    unsigned char header_integrity[256];
-    // first, verify hash of header to ensure integrity
-    SHA256(buf, sizeof(zklaim_header)-sizeof(((zklaim_header*)0)->hash), header_integrity);
-    if (!memcmp(header_integrity, buf+16, 32)) {
-        fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "zklaim_header integrity check failed");
+    if (ctx == NULL || buf == NULL || len < sizeof(zklaim_header)) {
+        return ZKLAIM_ERROR;
+    }
+    // Import into an empty context so existing storage is never lost or appended.
+    if (ctx->num_of_payloads != 0 || ctx->pl_ctx_head != NULL ||
+        ctx->pk_size != 0 || ctx->pk != NULL ||
+        ctx->vk_size != 0 || ctx->vk != NULL ||
+        ctx->proof_size != 0 || ctx->proof != NULL) {
         return ZKLAIM_ERROR;
     }
 
-    zklaim_header *header = (zklaim_header*) buf_iterator;
-
-    num_of_payloads = ntohl(header->num_of_payloads);
-    //printf("pl %d\n", num_of_payloads);
-    ctx->vk_size = ntohl(header->size_of_vk);
-    //printf("vk %d\n", size_of_vk);
-    ctx->proof_size = ntohl(header->size_of_proof);
-    //printf("proof %d\n", size_of_proof);
-
-    memcpy(ctx->pub_key, header->pub_key, sizeof(ctx->pub_key));
-
-    total_length = sizeof(zklaim_header);
-    total_length += num_of_payloads * sizeof(zklaim_payload);
-    total_length += ctx->vk_size;
-    total_length += sizeof(((zklaim_ctx*)0)->signature);
-    total_length += ctx->proof_size;
-
-    if (len != total_length) {
-        fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "buffer containing zklaim_ctx has invalid total_length");
-        //printf("buffer containing zklaim_ctx has invalid length (len: %zu vs total: %zu)\n", len, total_length);
+    // The caller's buffer need not be aligned for either serialized structure.
+    zklaim_header header;
+    memcpy(&header, buf, sizeof(header));
+    unsigned char header_integrity[SHA256_DIGEST_LENGTH];
+    SHA256(buf, offsetof(zklaim_header, hash), header_integrity);
+    if (memcmp(header_integrity, header.hash, sizeof(header.hash)) != 0) {
         return ZKLAIM_ERROR;
     }
 
-    // now point on first payload
-    buf_iterator = buf + sizeof(zklaim_header);
-
-    // 1 - deserialized payloads
-    for (uint32_t i=0; i<num_of_payloads; i++) {
-        zklaim_payload *pl = (zklaim_payload*) buf_iterator;
-        zklaim_add_pl(ctx, pl[i]);
+    const size_t num_of_payloads = ntohl(header.num_of_payloads);
+    const size_t vk_size = ntohl(header.size_of_vk);
+    const size_t proof_size = ntohl(header.size_of_proof);
+    if (ntohl(header.size_of_sig) != sizeof(ctx->signature)) {
+        return ZKLAIM_ERROR;
     }
 
-    buf_iterator = buf + sizeof(zklaim_header) + ctx->num_of_payloads * sizeof(zklaim_payload);
-
-    // 2 - deserialize verification key
-    ctx->vk = (unsigned char*) malloc(ctx->vk_size);
-    memcpy(ctx->vk, buf+sizeof(zklaim_header) + ctx->num_of_payloads*sizeof(zklaim_payload), ctx->vk_size);
-
-    buf_iterator = buf+sizeof(zklaim_header) + ctx->num_of_payloads*sizeof(zklaim_payload) + ctx->vk_size;
-
-    // 3 - deserialize signature
-    memcpy(ctx->signature, buf_iterator, sizeof((zklaim_ctx*)0)->signature);
-    buf_iterator += sizeof((zklaim_ctx*)0)->signature;
-
-    // 4- deserialize proof
-    //printf("%d\n", size_of_proof);
-    if (ctx->proof_size > 0) {
-    ctx->proof = (unsigned char*) malloc(ctx->proof_size);
-    memcpy(ctx->proof, buf+sizeof(zklaim_header) + ctx->num_of_payloads*sizeof(zklaim_payload) + ctx->vk_size + sizeof(((zklaim_ctx*)0)->signature), ctx->proof_size);
+    // Subtract each section from the supplied length. Check before multiplying
+    // or subtracting, so even UINT32_MAX sizes cannot wrap on 32-bit platforms.
+    size_t remaining = len - sizeof(header);
+    if (num_of_payloads > remaining / sizeof(zklaim_payload)) {
+        return ZKLAIM_ERROR;
+    }
+    remaining -= num_of_payloads * sizeof(zklaim_payload);
+    if (vk_size > remaining) {
+        return ZKLAIM_ERROR;
+    }
+    remaining -= vk_size;
+    if (sizeof(ctx->signature) > remaining) {
+        return ZKLAIM_ERROR;
+    }
+    remaining -= sizeof(ctx->signature);
+    if (proof_size != remaining) {
+        return ZKLAIM_ERROR;
     }
 
-    //return zklaim_ctx_verify(ctx);
+    // Commit only after every allocation and copy succeeds.
+    zklaim_ctx *parsed = zklaim_context_new();
+    if (parsed == NULL) {
+        return ZKLAIM_ERROR;
+    }
+    const unsigned char *cursor = buf + sizeof(header);
+    zklaim_wrap_payload_ctx **tail = &parsed->pl_ctx_head;
+    for (size_t i = 0; i < num_of_payloads; ++i) {
+        zklaim_wrap_payload_ctx *node = calloc(1, sizeof(*node));
+        if (node == NULL) {
+            goto failure;
+        }
+        memcpy(&node->pl, cursor, sizeof(node->pl));
+        cursor += sizeof(node->pl);
+        *tail = node;
+        tail = &node->next;
+    }
+    parsed->num_of_payloads = num_of_payloads;
+    if (vk_size > 0) {
+        parsed->vk = malloc(vk_size);
+        if (parsed->vk == NULL) {
+            goto failure;
+        }
+        memcpy(parsed->vk, cursor, vk_size);
+    }
+    parsed->vk_size = vk_size;
+    cursor += vk_size;
+    memcpy(parsed->signature, cursor, sizeof(parsed->signature));
+    cursor += sizeof(parsed->signature);
+    if (proof_size > 0) {
+        parsed->proof = malloc(proof_size);
+        if (parsed->proof == NULL) {
+            goto failure;
+        }
+        memcpy(parsed->proof, cursor, proof_size);
+    }
+    parsed->proof_size = proof_size;
+    memcpy(parsed->pub_key, header.pub_key, sizeof(parsed->pub_key));
+    *ctx = *parsed;
+    free(parsed);
     return ZKLAIM_OK;
+
+failure:
+    zklaim_ctx_free(parsed);
+    return ZKLAIM_ERROR;
 }
 
 size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf) {
@@ -391,7 +419,7 @@ size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf) {
     header->size_of_proof = htonl(ctx->proof_size);
     memcpy(header->pub_key, ctx->pub_key, sizeof(header->pub_key));
     // hash header values
-    SHA256((unsigned char*)header, sizeof(zklaim_header)-32, header->hash);
+    SHA256((unsigned char*)header, offsetof(zklaim_header, hash), header->hash);
 
     // 3 - serialize payloads
     zklaim_payload *pl = (zklaim_payload*) (*buf+sizeof(zklaim_header));
@@ -402,13 +430,17 @@ size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf) {
     }
 
     // 4 - serialize verification key
-    memcpy(*buf+sizeof(zklaim_header) + ctx->num_of_payloads*sizeof(zklaim_payload), ctx->vk, ctx->vk_size);
+    if (ctx->vk_size > 0) {
+        memcpy(*buf+sizeof(zklaim_header) + ctx->num_of_payloads*sizeof(zklaim_payload), ctx->vk, ctx->vk_size);
+    }
 
     // 5 - serialize signature
     memcpy(*buf+sizeof(zklaim_header) + ctx->num_of_payloads*sizeof(zklaim_payload) + ctx->vk_size, ctx->signature, sizeof(((zklaim_ctx*)0)->signature));
 
     // 6 - serialize proof
-    memcpy(*buf+sizeof(zklaim_header) + ctx->num_of_payloads*sizeof(zklaim_payload) + ctx->vk_size + sizeof(((zklaim_ctx*)0)->signature), ctx->proof, ctx->proof_size);
+    if (ctx->proof_size > 0) {
+        memcpy(*buf+sizeof(zklaim_header) + ctx->num_of_payloads*sizeof(zklaim_payload) + ctx->vk_size + sizeof(((zklaim_ctx*)0)->signature), ctx->proof, ctx->proof_size);
+    }
 
     return total_length;
 }

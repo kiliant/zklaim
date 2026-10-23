@@ -139,10 +139,13 @@ size_t zklaim_ctx_serialize(zklaim_ctx *ctx, unsigned char **buf);
 /**
  * deserialize a given buffer into a context
  *
- * @param ctx context where to store the deserialization result
+ * @param ctx empty context where to store the deserialization result
  * @param buf the buffer containing the context data
  * @param len length of the buffer in bytes
- * @return ZKLAIM_OK on success
+ * @return ZKLAIM_OK on success, or ZKLAIM_ERROR for invalid input,
+ *         allocation failure, or a context with payloads or key/proof storage.
+ *         On failure, the destination context is unchanged. Key and proof
+ *         contents are parsed when generating or verifying a proof.
  */
 int zklaim_ctx_deserialize(zklaim_ctx *ctx, unsigned char *buf, size_t len);
 
@@ -192,7 +195,7 @@ int zklaim_proof_verify(zklaim_ctx *ctx);
  *
  * @param ctx the context for which to generate the keys
  * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if the context is NULL
- *         or has no payloads.
+ *         or has no payloads, or setup fails.
  */
 int zklaim_trusted_setup(zklaim_ctx *ctx);
 

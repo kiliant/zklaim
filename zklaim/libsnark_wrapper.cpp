@@ -24,6 +24,10 @@
 #include <vector>
 #include <iostream>
 #include <fstream>
+#include <algorithm>
+#include <limits>
+#include <locale>
+#include <memory>
 #include <stdio.h>
 
 #include <libsnark/gadgetlib1/gadgets/basic_gadgets.hpp>
@@ -83,13 +87,77 @@ bit_vector memtobv2(unsigned char* mem, size_t len) {
     return res;
 }
 
-// this is needed to write an ostream to memory instead of e.g. a file
+// libff's decimal bigint reader assumes a digit-only token that fits its fixed
+// limb array. Check formatted reads before that reader sees them; binary reads
+// and separators use xsgetn and retain libff's existing wire format.
 class stream_mem_buf : public basic_streambuf<char> {
-    public:
-        stream_mem_buf(char* p, size_t len) {
-            setp(p, p + len);
-            setg(p, p, p + len);
+    const char *cursor;
+    const char *end;
+    size_t digits = 0;
+    static constexpr size_t limb_count =
+        libff::Fr<ppT>::num_limbs < libff::Fq<ppT>::num_limbs ?
+        libff::Fr<ppT>::num_limbs : libff::Fq<ppT>::num_limbs;
+    // log10(2) > 301/1000, so this many digits always fit in the limb array.
+    static constexpr size_t max_digits = limb_count * GMP_NUMB_BITS * 301 / 1000;
+
+    int_type underflow() override {
+        if (cursor == end) return traits_type::eof();
+        const unsigned char c = *cursor;
+        if (c >= '0' && c <= '9') {
+            if (digits >= max_digits) throw std::ios_base::failure("oversized integer");
+        } else if (c != ' ' && c != '\n' && c != '\r' && c != '\t' && c != '\v' && c != '\f') {
+            throw std::ios_base::failure("invalid integer");
         }
+        return traits_type::to_int_type(c);
+    }
+
+    int_type uflow() override {
+        const int_type c = underflow();
+        if (!traits_type::eq_int_type(c, traits_type::eof())) {
+            if (c >= '0' && c <= '9') ++digits;
+            else digits = 0;
+            ++cursor;
+        }
+        return c;
+    }
+
+    std::streamsize xsgetn(char *out, std::streamsize count) override {
+        const auto available = static_cast<std::streamsize>(end - cursor);
+        const auto taken = std::min(count, available);
+        if (taken > 0) memcpy(out, cursor, static_cast<size_t>(taken));
+        cursor += taken;
+        digits = 0;
+        return taken;
+    }
+
+public:
+    stream_mem_buf(const char *data, size_t len) : cursor(data), end(data + len) {}
+    bool exhausted() const { return cursor == end; }
+};
+
+// Native integers in libsnark's serialization are collection sizes or indices.
+// None can legitimately exceed the number of bytes in the whole object.
+class bounded_num_get : public std::num_get<char> {
+    const size_t limit;
+    template<typename T>
+    iter_type read(iter_type in, iter_type end, std::ios_base &stream,
+                   std::ios_base::iostate &error, T &value) const {
+        auto result = std::num_get<char>::do_get(in, end, stream, error, value);
+        if (!(error & std::ios::failbit) && value > limit) error |= std::ios::failbit;
+        return result;
+    }
+
+    iter_type do_get(iter_type in, iter_type end, std::ios_base &stream,
+                     std::ios_base::iostate &error, unsigned long &value) const override {
+        return read(in, end, stream, error, value);
+    }
+    iter_type do_get(iter_type in, iter_type end, std::ios_base &stream,
+                     std::ios_base::iostate &error, unsigned long long &value) const override {
+        return read(in, end, stream, error, value);
+    }
+
+public:
+    explicit bounded_num_get(size_t bytes) : limit(bytes) {}
 };
 
 struct zklaim_proving_key {
@@ -118,80 +186,86 @@ void libsnark_free(zklaim_proving_key* pk, zklaim_verification_key* vk, zklaim_p
     }
 }
 
+template<typename T>
+size_t libsnark_export(const T &value, unsigned char **buf) {
+    if (buf == nullptr) return 0;
+    *buf = nullptr;
+    try {
+        stringstream stream;
+        stream.exceptions(std::ios::failbit | std::ios::badbit);
+        stream << value;
+        const string serialized = stream.str();
+        std::unique_ptr<unsigned char, decltype(&free)> storage(
+            static_cast<unsigned char *>(malloc(serialized.size())), free);
+        if (!storage) return 0;
+        serialized.copy(reinterpret_cast<char *>(storage.get()), serialized.size());
+        *buf = storage.release();
+        return serialized.size();
+    } catch (...) {
+        return 0;
+    }
+}
+
 size_t libsnark_export_vk(r1cs_gg_ppzksnark_verification_key<ppT> vk, unsigned char **buf) {
-    stringstream vkstream;
-    size_t len;
+    return libsnark_export(vk, buf);
+}
 
-    vkstream << vk;
-    string string_vk = vkstream.str();
-
-    len = string_vk.length();
-
-    *buf = (unsigned char*) malloc(len);
-    string_vk.copy((char*)*buf, len, 0);
-    return len;
+template<typename T>
+int libsnark_import(T *value, unsigned char *buf, size_t blen) {
+    if (value == nullptr || buf == nullptr || blen == 0 ||
+        blen > static_cast<size_t>(std::numeric_limits<std::streamsize>::max())) {
+        return ZKLAIM_ERROR;
+    }
+    try {
+        stream_mem_buf buffer(reinterpret_cast<char *>(buf), blen);
+        std::istream stream(&buffer);
+        stream.imbue(std::locale(std::locale::classic(), new bounded_num_get(blen)));
+        // Throw at the first failed read, before libsnark uses an unread count
+        // or continues parsing a partially initialized object.
+        stream.exceptions(std::ios::failbit | std::ios::badbit);
+        T parsed;
+        stream >> parsed;
+        if (!stream || !buffer.exhausted()) {
+            return ZKLAIM_ERROR;
+        }
+        *value = std::move(parsed);
+        return ZKLAIM_OK;
+    } catch (...) {
+        return ZKLAIM_ERROR;
+    }
 }
 
 int libsnark_import_vk(r1cs_gg_ppzksnark_verification_key<ppT>* vk, unsigned char *buf, size_t blen) {
-
-    stringstream vkstream;
-    vkstream.write((char*)buf, blen);
-    vkstream.rdbuf()->pubseekpos(0, std::ios_base::in);
-
-    vkstream >> *vk;
-
-    return 0;
+    if (libsnark_import(vk, buf, blen) != ZKLAIM_OK) return ZKLAIM_ERROR;
+    // libsnark's sparse-vector reader accepts inconsistent counts and indices.
+    const auto &rest = vk->gamma_ABC_g1.rest;
+    if (rest.indices.size() != rest.values.size() ||
+        rest.indices.size() > rest.domain_size()) return ZKLAIM_ERROR;
+    for (size_t i = 0; i < rest.indices.size(); ++i) {
+        if (rest.indices[i] >= rest.domain_size() ||
+            (i > 0 && rest.indices[i - 1] >= rest.indices[i])) return ZKLAIM_ERROR;
+    }
+    return ZKLAIM_OK;
 }
 
 size_t libsnark_export_pk(r1cs_gg_ppzksnark_proving_key<ppT> pk, unsigned char **buf) {
-    stringstream vkstream;
-    size_t len;
-    vkstream << pk;
-    string string_pk = vkstream.str();
-
-    len = string_pk.length();
-
-    *buf = (unsigned char*) malloc(len);
-    string_pk.copy((char*)*buf, len, 0);
-    return len;
+    return libsnark_export(pk, buf);
 }
 
 int libsnark_import_pk(r1cs_gg_ppzksnark_proving_key<ppT>* pk, unsigned char *buf, size_t blen) {
-    stringstream vkstream;
-    vkstream.write((char*)buf, blen);
-    vkstream.rdbuf()->pubseekpos(0, std::ios_base::in);
-
-    vkstream >> *pk;
-
-    return 0;
+    return libsnark_import(pk, buf, blen);
 }
 
 size_t libsnark_export_proof(r1cs_gg_ppzksnark_proof<ppT> proof, unsigned char **buf) {
-    stringstream proofstream;
-    size_t len;
-    proofstream << proof;
-    string ps = proofstream.str();
-
-    len = ps.length();
-
-    *buf = (unsigned char*) malloc(len);
-    ps.copy((char*)*buf, len, 0);
-    return len;
+    return libsnark_export(proof, buf);
 }
 
 int libsnark_import_proof(r1cs_gg_ppzksnark_proof<ppT>* proof, unsigned char *buf, size_t blen) {
-
-    stringstream proofstream;
-    proofstream.write((char*)buf, blen);
-    proofstream.rdbuf()->pubseekpos(0, std::ios_base::in);
-
-    proofstream >> *proof;
-
-    return 0;
+    return libsnark_import(proof, buf, blen);
 }
 
 // TODO
-int libsnark_trusted_setup(zklaim_ctx *ctx) {
+int libsnark_trusted_setup(zklaim_ctx *ctx) try {
     if (ctx == nullptr || ctx->num_of_payloads == 0 || ctx->pl_ctx_head == nullptr) {
         return ZKLAIM_ERROR;
     }
@@ -202,14 +276,28 @@ int libsnark_trusted_setup(zklaim_ctx *ctx) {
     ppT::init_public_params();
     auto keypair = generate_keypair<ppT>(ctx);
 
-    ctx->vk_size = libsnark_export_vk(keypair.vk, &ctx->vk);
-    ctx->pk_size = libsnark_export_pk(keypair.pk, &ctx->pk);
+    unsigned char *vk = nullptr;
+    const size_t vk_size = libsnark_export_vk(keypair.vk, &vk);
+    std::unique_ptr<unsigned char, decltype(&free)> vk_storage(vk, free);
+    if (vk_size == 0) return ZKLAIM_ERROR;
+    unsigned char *pk = nullptr;
+    const size_t pk_size = libsnark_export_pk(keypair.pk, &pk);
+    std::unique_ptr<unsigned char, decltype(&free)> pk_storage(pk, free);
+    if (pk_size == 0) return ZKLAIM_ERROR;
+    free(ctx->vk);
+    free(ctx->pk);
+    ctx->vk = vk_storage.release();
+    ctx->vk_size = vk_size;
+    ctx->pk = pk_storage.release();
+    ctx->pk_size = pk_size;
 
     return 0;
+} catch (...) {
+    return ZKLAIM_ERROR;
 }
 
 // TODO
-int libsnark_prove(zklaim_ctx *ctx) {
+int libsnark_prove(zklaim_ctx *ctx) try {
     if (ctx == nullptr || ctx->num_of_payloads == 0 || ctx->pl_ctx_head == nullptr) {
         return ZKLAIM_ERROR;
     }
@@ -220,20 +308,32 @@ int libsnark_prove(zklaim_ctx *ctx) {
     ppT::init_public_params();
     r1cs_gg_ppzksnark_proving_key<ppT> pk;
 
-    libsnark_import_pk(&pk, ctx->pk, ctx->pk_size);
+    if (libsnark_import_pk(&pk, ctx->pk, ctx->pk_size) != ZKLAIM_OK) {
+        return ZKLAIM_ERROR;
+    }
 
     r1cs_gg_ppzksnark_proof<ppT> libsnark_proof;
     if (!generate_proof<ppT>(pk, ctx, libsnark_proof)) {
         return 1;
     }
 
-    ctx->proof_size = libsnark_export_proof(libsnark_proof, &ctx->proof);
+    unsigned char *proof = nullptr;
+    const size_t proof_size = libsnark_export_proof(libsnark_proof, &proof);
+    if (proof_size == 0) return ZKLAIM_ERROR;
+    free(ctx->proof);
+    ctx->proof = proof;
+    ctx->proof_size = proof_size;
 
     return 0;
+} catch (...) {
+    return ZKLAIM_ERROR;
 }
 
 // TODO
-int libsnark_verify(zklaim_ctx *ctx) {
+int libsnark_verify(zklaim_ctx *ctx) try {
+    if (ctx == nullptr || ctx->num_of_payloads == 0 || ctx->pl_ctx_head == nullptr) {
+        return ZKLAIM_ERROR;
+    }
 #ifndef DEBUG
     libff::inhibit_profiling_counters = 1;
     libff::inhibit_profiling_info = 1;
@@ -242,14 +342,16 @@ int libsnark_verify(zklaim_ctx *ctx) {
     int res;
     r1cs_gg_ppzksnark_verification_key<ppT> vk;
 
-    libsnark_import_vk(&vk, ctx->vk, ctx->vk_size);
-
     r1cs_gg_ppzksnark_proof<ppT> libsnark_proof;
-
-    libsnark_import_proof(&libsnark_proof, ctx->proof, ctx->proof_size);
-
-    res = !verify_proof<ppT>(vk, libsnark_proof, ctx);
+    if (libsnark_import_vk(&vk, ctx->vk, ctx->vk_size) != ZKLAIM_OK ||
+        libsnark_import_proof(&libsnark_proof, ctx->proof, ctx->proof_size) != ZKLAIM_OK) {
+        res = ZKLAIM_ERROR;
+    } else {
+        res = !verify_proof<ppT>(vk, libsnark_proof, ctx);
+    }
     return res;
+} catch (...) {
+    return ZKLAIM_ERROR;
 }
 
 //#ifdef __cplusplus
