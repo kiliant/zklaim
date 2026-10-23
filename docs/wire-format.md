@@ -70,6 +70,8 @@ Predicates remain selectable public inputs to the proof; the verifier must suppl
 
 The private-key container returned by `zklaim_pk2buf` is zklaim-specific: 32 public-key bytes followed by the 32-byte RFC 8032 seed. It is not PKCS#8 and is not the old ECDSA scalar encoding. Import checks that the seed and public key agree. Generated and imported keys use libgcrypt's explicit `eddsa` flag. Legacy ECDSA keys and signature objects are rejected.
 
+The wrapper checks the RFC 8032 scalar bound `S < L` on import, export, and verification, including direct S-expression calls. Seed/public-key agreement is checked by independently deriving the public key with OpenSSL. These checks do not depend on whether the installed libgcrypt version enforces them itself.
+
 ## Migration
 
 Unversioned raw-struct messages are rejected; there is no heuristic or fallback decoder. Regenerate issuer signing keys and pin their new public keys. Regenerate trusted-setup keys and reissue credentials and proofs: both the signature scheme and the hashed attribute/circuit representation changed. Existing private ECDSA scalars must not be relabeled as Ed25519 seeds.

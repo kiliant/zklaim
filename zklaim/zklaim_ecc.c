@@ -20,6 +20,32 @@
 #include <zklaim/zklaim_ecc.h>
 #include <limits.h>
 #include <string.h>
+#include <openssl/evp.h>
+
+static int canonical_scalar(const unsigned char *s) {
+    // RFC 8032 requires S < L. Older libgcrypt versions reduce S modulo L.
+    static const unsigned char order[32] = {
+        0xed,0xd3,0xf5,0x5c,0x1a,0x63,0x12,0x58,0xd6,0x9c,0xf7,0xa2,0xde,0xf9,0xde,0x14,
+        0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x10
+    };
+    for (int i = 31; i >= 0; --i) {
+        if (s[i] != order[i]) return s[i] < order[i];
+    }
+    return 0;
+}
+
+static int seed_matches_public(const unsigned char *point, const unsigned char *seed) {
+    // Do not depend on gcry_pk_testkey checking q against the Ed25519 seed:
+    // older libgcrypt versions accept inconsistent pairs.
+    EVP_PKEY *key = EVP_PKEY_new_raw_private_key(EVP_PKEY_ED25519, NULL, seed, 32);
+    if (key == NULL) return 0;
+    unsigned char derived[32];
+    size_t len = sizeof(derived);
+    const int matches = EVP_PKEY_get_raw_public_key(key, derived, &len) == 1 &&
+                        len == 32 && memcmp(derived, point, 32) == 0;
+    EVP_PKEY_free(key);
+    return matches;
+}
 
 void print_sexp(gcry_sexp_t sexp) {
     unsigned char* buf;
@@ -79,10 +105,12 @@ int zklaim_sign(unsigned char *buf, size_t len, gcry_sexp_t *sig, gcry_sexp_t pr
 int zklaim_verify(unsigned char *buf, size_t len, gcry_sexp_t sig, gcry_sexp_t pub) {
     gcry_sexp_t data = NULL;
     gcry_error_t err;
-    gcry_sexp_t algorithm = gcry_sexp_find_token(sig, "eddsa", 0);
-    const int eddsa = algorithm != NULL;
-    gcry_sexp_release(algorithm);
-    if (!eddsa || !ed25519_key(pub) || signature_data(buf, len, &data)) {
+    unsigned char *encoded = NULL;
+    // Enforce algorithm, fixed-width components and canonical S for direct
+    // S-expression callers as well as signatures imported from bytes.
+    if (zklaim_sig2buf(sig, &encoded, NULL)) return 1;
+    free(encoded);
+    if (!ed25519_key(pub) || signature_data(buf, len, &data)) {
         return 1;
     }
     err = gcry_pk_verify(sig, data, pub);
@@ -118,7 +146,8 @@ int zklaim_sig2buf(gcry_sexp_t sig, unsigned char **buf, size_t *len) {
     const char *rbytes = gcry_sexp_nth_data(r, 1, &rsize);
     const char *sbytes = gcry_sexp_nth_data(s, 1, &ssize);
     unsigned char *encoded = NULL;
-    if (rbytes != NULL && sbytes != NULL && rsize == 32 && ssize == 32) {
+    if (rbytes != NULL && sbytes != NULL && rsize == 32 && ssize == 32 &&
+        canonical_scalar((const unsigned char *) sbytes)) {
         encoded = malloc(64);
         if (encoded != NULL) {
             // RFC 8032: the encoded point R followed by little-endian scalar S.
@@ -138,7 +167,7 @@ int zklaim_sig2buf(gcry_sexp_t sig, unsigned char **buf, size_t *len) {
 int zklaim_buf2sig(unsigned char *buf, size_t len, gcry_sexp_t *sig) {
     if (sig == NULL) return 1;
     *sig = NULL;
-    if (buf == NULL || len != 64) return 1;
+    if (buf == NULL || len != 64 || !canonical_scalar(buf + 32)) return 1;
     return gcry_sexp_build(sig, NULL, "(sig-val (eddsa (r %b) (s %b)))",
                            32, buf, 32, buf + 32) != 0;
 }
@@ -235,7 +264,8 @@ int zklaim_pk2buf(gcry_sexp_t priv, unsigned char **buf, size_t *len) {
     size_t seed_len = 0;
     const char *seed = gcry_sexp_nth_data(d, 1, &seed_len);
     unsigned char *encoded = NULL;
-    if (seed != NULL && seed_len == 32) {
+    if (seed != NULL && seed_len == 32 &&
+        seed_matches_public(point, (const unsigned char *) seed)) {
         encoded = malloc(64);
         if (encoded != NULL) {
             memcpy(encoded, point, 32);
@@ -253,7 +283,7 @@ int zklaim_pk2buf(gcry_sexp_t priv, unsigned char **buf, size_t *len) {
 int zklaim_buf2pk(unsigned char *buf, size_t len, gcry_sexp_t *priv) {
     if (priv == NULL) return 1;
     *priv = NULL;
-    if (buf == NULL || len != 64) return 1;
+    if (buf == NULL || len != 64 || !seed_matches_public(buf, buf + 32)) return 1;
     unsigned char point[33];
     point[0] = 0x40;
     memcpy(point + 1, buf, 32);

@@ -465,6 +465,12 @@ TEST(zklaim_ecc, rejects_legacy_ecdsa_keys_and_inconsistent_seed_pairs) {
     unsigned char inconsistent[64] = {};
     EXPECT_NE(0, zklaim_buf2pk(inconsistent, sizeof(inconsistent), &legacy));
     EXPECT_EQ(nullptr, legacy);
+    auto mismatched = ed25519_hex(
+        "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a"
+        "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60");
+    mismatched.back() ^= 1;
+    EXPECT_NE(0, zklaim_buf2pk(mismatched.data(), mismatched.size(), &legacy));
+    EXPECT_EQ(nullptr, legacy);
 }
 
 TEST(zklaim_ecc, context_signature_matches_specified_domain_and_lengths) {
@@ -516,7 +522,9 @@ TEST(zklaim_ecc, rejects_ecdsa_labels_and_noncanonical_ed25519_scalars) {
         bytes[32 + i] = static_cast<unsigned char>(carry);
         carry >>= 8;
     }
-    ASSERT_EQ(0, zklaim_buf2sig(bytes.data(), bytes.size(), &sig));
+    EXPECT_NE(0, zklaim_buf2sig(bytes.data(), bytes.size(), &sig));
+    EXPECT_EQ(nullptr, sig);
+    CHECK_GCRY_ERR(gcry_sexp_build(&sig, nullptr, "(sig-val(eddsa(r %b)(s %b)))", 32, bytes.data(), 32, bytes.data() + 32));
     EXPECT_NE(0, zklaim_verify(nullptr, 0, sig, pub));
     gcry_sexp_release(sig);
     gcry_sexp_release(pub);

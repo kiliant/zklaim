@@ -3,7 +3,7 @@
 [![CI](https://github.com/kiliant/zklaim/actions/workflows/ci.yml/badge.svg)](https://github.com/kiliant/zklaim/actions/workflows/ci.yml)
 
 ## Instructions
-1. install dependencies (C/C++ compiler, CMake >= 3.13, pkg-config, GMP, libgcrypt, OpenSSL)
+1. install dependencies (C/C++ compiler, CMake >= 3.13, pkg-config, GMP, libgcrypt, OpenSSL >= 1.1.1)
     - on Debian/Ubuntu: ``sudo apt-get install build-essential cmake git pkg-config libgmp-dev libgcrypt20-dev libssl-dev``
     - on Arch Linux: ``sudo pacman -S --needed base-devel cmake git gmp libgcrypt openssl``
     - on macOS (Homebrew): ``brew install cmake gmp libgcrypt openssl@3 pkgconf``

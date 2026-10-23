@@ -79,7 +79,7 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OPT_FLAGS}")
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(GCRYPT REQUIRED IMPORTED_TARGET libgcrypt)
-find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+find_package(OpenSSL 1.1.1 REQUIRED COMPONENTS Crypto)
 
 if("${WITH_PROCPS}")
   pkg_check_modules(PROCPS REQUIRED libprocps)
