@@ -36,7 +36,7 @@ The verifier learns the commitments, the issuer key, the payload count, and that
 - **Relay.** The nonce does not identify the verifier. A malicious verifier can forward another verifier's live request to the holder and pass the presentation on. Binding presentations to a session or verifier identity is the application's responsibility.
 - **Predicate expressiveness.** Each attribute is compared with a public constant using one operation. There are no comparisons between attributes, no disjunctions, and no ranges on a single attribute slot.
 - **No revocation.** zklaim has no revocation mechanism. An expiry date stored as an attribute, which verifiers check with `zklaim_greater` against the current date, limits a credential's lifetime.
-- **Witness hygiene.** The library does not zero freed memory. `zklaim_clear_pres` clears witnesses in a context, and `zklaim_print` writes them to standard output.
+- **Witness hygiene.** `zklaim_ctx_free` and `zklaim_clear_pres` clear the witnesses and salts stored in a context. Copies outside it are not cleared by the library: the application's own `zklaim_payload` values, credential buffers from `zklaim_ctx_serialize_credential`, private key buffers from `zklaim_pk2buf`, and libsnark's working memory during proving. `zklaim_print` writes witnesses to standard output.
 
 ## Message parsing
 
