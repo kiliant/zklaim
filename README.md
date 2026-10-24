@@ -6,7 +6,7 @@ zklaim is a C library for zero-knowledge credentials. An issuer signs commitment
 
 ## Quick start
 
-Install a C/C++ compiler, CMake 3.13 or newer, pkg-config, GMP, libgcrypt, and OpenSSL 1.1.1 or newer ([per-platform commands](docs/building.md#requirements)). Then:
+Install a C/C++ compiler, CMake 3.13 or newer, pkg-config, GMP, libgcrypt, and OpenSSL 3.0 or newer ([per-platform commands](docs/building.md#requirements)). Then:
 
 ```sh
 git clone https://github.com/kiliant/zklaim.git
