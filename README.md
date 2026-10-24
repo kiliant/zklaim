@@ -33,4 +33,6 @@ The [documentation](docs/README.md) covers:
 
 ## License
 
-See [LICENSE](LICENSE).
+zklaim is free software under the GNU Lesser General Public License, version 3 or (at your option) any later version. [LICENSE](LICENSE) contains the LGPL, which supplements the GNU General Public License in [COPYING](COPYING).
+
+The libsnark and libff submodules are MIT licensed. libff is linked statically into `libzklaim`, so binary distributions must include its license notice.
