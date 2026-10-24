@@ -9,7 +9,9 @@ zklaim builds with CMake on x86-64 and arm64, on Linux and macOS.
 - pkg-config
 - GMP, including its C++ bindings (`gmpxx`)
 - libgcrypt
-- OpenSSL 1.1.1 or newer
+- OpenSSL 3.0 or newer
+
+OpenSSL 3.0 is the first version under the Apache License 2.0, which is compatible with zklaim's LGPL; the license of earlier versions is not. On systems that still ship OpenSSL 1.1.1, such as RHEL 8, install OpenSSL 3 separately and pass its prefix as `-DOPENSSL_ROOT_DIR=...` when configuring.
 
 Install them with:
 
