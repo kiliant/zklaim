@@ -111,15 +111,15 @@ Allocates an empty context. Returns `NULL` on allocation failure.
 void zklaim_ctx_free(zklaim_ctx *ctx);
 ```
 
-Frees the context, its payload list, and its proof. `NULL` is allowed.
+Frees the context, its payload list, and its proof. Private witness and salt bytes are cleared before their payload storage is freed. `NULL` is allowed.
 
 ### `zklaim_add_pl`
 
 ```c
-void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl);
+int zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl);
 ```
 
-Appends a copy of `pl` to the context. Does not hash it.
+Appends a copy of `pl` to the context. Does not hash it. Returns `ZKLAIM_OK` on success or `ZKLAIM_ERROR` for a null context, unsupported payload count, or allocation failure. On failure, the context is unchanged.
 
 ### `zklaim_set_attr`, `zklaim_get_attr`
 
