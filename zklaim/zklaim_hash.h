@@ -1,16 +1,16 @@
 /*
  * This file is part of zklaim.
  * zklaim is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * zklaim is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with zklaim. If not, see https://www.gnu.org/licenses/.
  */
 
@@ -39,7 +39,9 @@ ZKLAIM_API void zklaim_print_hex(unsigned char *buf, size_t len);
  *
  * @param buf the buffer to calculate the hash for
  * @param len the length of the buffer
- * @param dgst the digest will be stored in a buffer of appropriate size (32 byte in case of SHA256)
+ * @param dgst the digest will be stored in a buffer of appropriate size (32 byte in case of SHA256),
+ *        allocated by the callee; release it with free()
+ * @return ZKLAIM_OK on success
  */
 ZKLAIM_API int zklaim_calculate_hash(unsigned char *buf, size_t len, unsigned char **dgst);
 

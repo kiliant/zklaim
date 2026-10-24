@@ -1,16 +1,16 @@
 /*
  * This file is part of zklaim.
  * zklaim is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
+ * it under the terms of the GNU Lesser General Public License as published by
  * the Free Software Foundation, either version 3 of the License, or
  * (at your option) any later version.
  *
  * zklaim is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
- * GNU General Public License for more details.
+ * GNU Lesser General Public License for more details.
  *
- * You should have received a copy of the GNU General Public License
+ * You should have received a copy of the GNU Lesser General Public License
  * along with zklaim. If not, see https://www.gnu.org/licenses/.
  */
 
@@ -44,17 +44,18 @@ ZKLAIM_API int zklaim_sign(unsigned char *buf, size_t len, gcry_sexp_t *sig, gcr
  * @param buf the buffer to verify
  * @param len length of the buffer
  * @param sig signature to verify
- * @param pub correspondin public key
+ * @param pub corresponding public key
  * @return ZKLAIM_OK on success
  */
 ZKLAIM_API int zklaim_verify(unsigned char *buf, size_t len, gcry_sexp_t sig, gcry_sexp_t pub);
 
 
 /**
- * serialize a signature to a buffer
+ * serialize a signature to a buffer as R (32 bytes) || S (32 bytes)
  *
  * @param sig the signature to serialize
- * @param buf the buffer containing the serialized signature
+ * @param buf the buffer containing the serialized signature, allocated by the
+ *        callee; release it with free()
  * @param len the length of buf in bytes
  * @return ZKLAIM_OK on success
  */
@@ -92,10 +93,12 @@ ZKLAIM_API int zklaim_get_pub(gcry_sexp_t priv, gcry_sexp_t *pub);
 
 
 /**
- * serialize a public key to a buffer
+ * serialize a public key to a buffer as 32 RFC 8032 bytes
+ * a private key is accepted as well; its public key is serialized
  *
  * @param pub the public key to serialize
- * @param buf the buffer containing the serialized public key
+ * @param buf the buffer containing the serialized public key, allocated by the
+ *        callee; release it with free()
  * @param len the length of buf in bytes
  * @return ZKLAIM_OK on success
  */
@@ -118,7 +121,8 @@ ZKLAIM_API int zklaim_buf2pub(unsigned char *buf, size_t len, gcry_sexp_t *pub);
  * This is a zklaim-specific container, not PKCS#8 or a legacy ECDSA scalar.
  *
  * @param priv the private key to serialize
- * @param buf the buffer containing the serialized private key
+ * @param buf the buffer containing the serialized private key, allocated by the
+ *        callee; it is secret, release it with free()
  * @param len length of buf in bytes
  * @return ZKLAIM_OK on success
  */
