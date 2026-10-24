@@ -64,9 +64,9 @@ typedef struct zklaim_payload zklaim_payload;
 struct zklaim_payload {
     uint64_t data_ref[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
     enum zklaim_op data_op[ZKLAIM_MAX_PAYLOAD_ATTRIBUTES];
-    unsigned char salt[ZKLAIM_SALT_SIZE];
-    unsigned char hash[32];
-    uint8_t priv;
+    unsigned char salt[ZKLAIM_SALT_SIZE]; // copy of the salt at the end of pre
+    unsigned char hash[32]; // SHA-256 commitment to pre
+    uint8_t priv; // 0 if pre and salt hold the witness, 1 if they are hidden (zeroed)
     unsigned char pre[ZKLAIM_PRE_SIZE]; // five big-endian uint64 attributes, then the salt
 };
 
@@ -87,8 +87,9 @@ typedef struct zklaim_sig {
 } zklaim_sig;
 
 /**
- * maintaining the state
- * TODO
+ * a credential or presentation: the payload list, the proof, and the issuer's
+ * public key and signature. pub_key is whatever a message names and must not be
+ * used as a trusted issuer key.
  */
 typedef struct zklaim_ctx {
     size_t num_of_payloads;
@@ -101,11 +102,9 @@ typedef struct zklaim_ctx {
 
 
 /**
- * bootstrapping
- * called by issuer/prover
- * sets up the circuits
+ * allocate an empty context; free it with zklaim_ctx_free
  *
- * @return newly created zklaim context datastructure
+ * @return newly created zklaim context datastructure, or NULL if allocation fails
  */
 ZKLAIM_API zklaim_ctx* zklaim_context_new();
 
@@ -197,7 +196,7 @@ ZKLAIM_API int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_is
  * @return ZKLAIM_OK on success, or ZKLAIM_ERROR if signing or serialization fails.
  *         On failure, the existing context signature and issuer key are unchanged.
  */
-ZKLAIM_API int zklaim_ctx_sign(zklaim_ctx*, gcry_sexp_t);
+ZKLAIM_API int zklaim_ctx_sign(zklaim_ctx *ctx, gcry_sexp_t priv);
 
 
 /**
@@ -226,7 +225,7 @@ ZKLAIM_API int zklaim_proof_generate(zklaim_ctx *ctx, const unsigned char *pk, s
  * @param vk verification key for the context's payload count
  * @param vk_size length of vk in bytes
  * @param nonce the challenge the proof must be bound to
- * @result ZKLAIM_OK on success
+ * @return ZKLAIM_OK on success
  */
 ZKLAIM_API int zklaim_proof_verify(zklaim_ctx *ctx, const unsigned char *vk, size_t vk_size,
                         const unsigned char nonce[ZKLAIM_NONCE_SIZE]);
@@ -254,11 +253,11 @@ ZKLAIM_API int zklaim_trusted_setup(size_t num_of_payloads, unsigned char **pk, 
 
 
 /**
- * add a payload to a given context
+ * append a copy of a payload to a given context
+ * the payload is not hashed; call zklaim_hash_ctx after adding all payloads
  *
  * @param ctx the context to add the payload to
  * @param pl the payload to add
- * @return ZKLAIM_OK on success
  */
 ZKLAIM_API void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl);
 
@@ -275,6 +274,7 @@ ZKLAIM_API void zklaim_hash_pl(zklaim_payload *pl);
  * hash a context
  * this creates hashes for every payload contained in the context
  * this also ensures that a fresh salt is generated for every payload
+ * call it before zklaim_ctx_sign: hashing a signed context invalidates its signature
  *
  * @param ctx the context to hash
  */
@@ -282,7 +282,8 @@ ZKLAIM_API void zklaim_hash_ctx(zklaim_ctx *ctx);
 
 
 /**
- * prints information about a given ctx
+ * prints information about a given ctx to stdout, including the attributes and
+ * salts of payloads that are not hidden; for debugging only
  *
  * @param ctx the context to print
  */

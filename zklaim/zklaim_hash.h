@@ -39,7 +39,9 @@ ZKLAIM_API void zklaim_print_hex(unsigned char *buf, size_t len);
  *
  * @param buf the buffer to calculate the hash for
  * @param len the length of the buffer
- * @param dgst the digest will be stored in a buffer of appropriate size (32 byte in case of SHA256)
+ * @param dgst the digest will be stored in a buffer of appropriate size (32 byte in case of SHA256),
+ *        allocated by the callee; release it with free()
+ * @return ZKLAIM_OK on success
  */
 ZKLAIM_API int zklaim_calculate_hash(unsigned char *buf, size_t len, unsigned char **dgst);
 
