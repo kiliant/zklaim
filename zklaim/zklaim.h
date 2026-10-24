@@ -110,7 +110,7 @@ ZKLAIM_API zklaim_ctx* zklaim_context_new();
 
 
 /**
- * frees a given zklaim context
+ * frees a given zklaim context, clearing owned private witnesses first
  *
  * @param ctx context to free; NULL is allowed
  */
@@ -258,8 +258,11 @@ ZKLAIM_API int zklaim_trusted_setup(size_t num_of_payloads, unsigned char **pk, 
  *
  * @param ctx the context to add the payload to
  * @param pl the payload to add
+ * @return ZKLAIM_OK on success, or ZKLAIM_ERROR for a NULL context,
+ *         an unsupported payload count, or allocation failure. On failure,
+ *         the context is unchanged.
  */
-ZKLAIM_API void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl);
+ZKLAIM_API int zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl);
 
 
 /**

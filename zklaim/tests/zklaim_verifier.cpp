@@ -1,6 +1,8 @@
 #include <gtest/gtest.h>
+#include <atomic>
 #include <cstring>
 #include <memory>
+#include <thread>
 #include <vector>
 
 extern "C" {
@@ -114,6 +116,25 @@ TEST_F(zklaim_verifier, accepts_trusted_issuer_and_exact_policy_without_mutation
     EXPECT_EQ(before, serialize(received.get()));
     EXPECT_EQ(1, received->pl_ctx_head->pl.priv);
     EXPECT_EQ(1, received->pl_ctx_head->next->pl.priv);
+}
+
+TEST_F(zklaim_verifier, concurrent_verification_uses_initialized_curve_parameters) {
+    std::atomic<int> failures{0};
+    std::vector<std::thread> threads;
+    for (int i = 0; i < 8; ++i) {
+        threads.emplace_back([&] {
+            for (int j = 0; j < 10; ++j) {
+                if (verify() != ZKLAIM_OK) ++failures;
+            }
+        });
+    }
+    for (auto &thread : threads) thread.join();
+    EXPECT_EQ(0, failures.load());
+}
+
+TEST_F(zklaim_verifier, malformed_signature_has_signature_error_code) {
+    memset(received->signature + 32, 0xff, 32); // Noncanonical Ed25519 scalar.
+    EXPECT_EQ(ZKLAIM_INVALID_SIGNATURE, verify());
 }
 
 TEST_F(zklaim_verifier, rejects_self_issued_credentials_and_relabelled_issuer_keys) {

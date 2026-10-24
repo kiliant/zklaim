@@ -69,7 +69,10 @@ static size_t issue_credential(gcry_sexp_t issuer_key, unsigned char **credentia
 
     zklaim_ctx *ctx = zklaim_context_new();
     if (ctx == NULL) return 0;
-    zklaim_add_pl(ctx, pl);            // copies pl
+    if (zklaim_add_pl(ctx, pl) != ZKLAIM_OK) {
+        zklaim_ctx_free(ctx);
+        return 0;
+    }
     zklaim_hash_ctx(ctx);              // fresh salts and commitments
     size_t len = 0;
     if (zklaim_ctx_sign(ctx, issuer_key) == ZKLAIM_OK) {

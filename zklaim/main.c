@@ -122,7 +122,12 @@ int worker() {
      * add payload to context
      */
     printf("[ISSUER] adding payloads to context\n");
-    zklaim_add_pl(ctx, pl);
+    if (zklaim_add_pl(ctx, pl) != ZKLAIM_OK) {
+        zklaim_ctx_free(ctx);
+        gcry_sexp_release(priv);
+        gcry_sexp_release(pub);
+        return ZKLAIM_ERROR;
+    }
     /* zklaim_add_pl(ctx, pl); */
     //zklaim_add_pl(ctx, pl2);
     zklaim_hash_ctx(ctx);
