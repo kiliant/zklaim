@@ -27,6 +27,7 @@
 #include <zklaim/zklaim_hash.h>
 #include <stdio.h>
 #include <string.h>
+#include <openssl/crypto.h>
 #include <zklaim/zklaim_wire.h>
 
 unsigned char zklaim_wire_curve(void) {
@@ -68,6 +69,8 @@ void zklaim_ctx_free(zklaim_ctx *ctx) {
     zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
     while (cur != NULL) {
         zklaim_wrap_payload_ctx *next = cur->next;
+        OPENSSL_cleanse(cur->pl.pre, sizeof(cur->pl.pre));
+        OPENSSL_cleanse(cur->pl.salt, sizeof(cur->pl.salt));
         free(cur);
         cur = next;
     }
@@ -95,9 +98,11 @@ int zklaim_trusted_setup(size_t num_of_payloads, unsigned char **pk, size_t *pk_
     return libsnark_trusted_setup(num_of_payloads, pk, pk_size, vk, vk_size);
 }
 
-void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl) {
+int zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl) {
+    if (ctx == NULL || ctx->num_of_payloads >= UINT32_MAX) return ZKLAIM_ERROR;
     zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
     zklaim_wrap_payload_ctx *n = (zklaim_wrap_payload_ctx*) calloc(1, sizeof(zklaim_wrap_payload_ctx));
+    if (n == NULL) return ZKLAIM_ERROR;
 
     // this adds salt and hashes
     //zklaim_hash_pl(&pl);
@@ -114,6 +119,7 @@ void zklaim_add_pl(zklaim_ctx *ctx, zklaim_payload pl) {
         ctx->pl_ctx_head = n;
     }
     ctx->num_of_payloads += 1;
+    return ZKLAIM_OK;
 }
 
 void zklaim_hash_pl(zklaim_payload *pl) {
@@ -211,8 +217,8 @@ int zklaim_get_attr(const zklaim_payload *pl, uint8_t pos, uint64_t *attr) {
 void zklaim_clear_pres(zklaim_ctx *ctx) {
     zklaim_wrap_payload_ctx *cur = ctx->pl_ctx_head;
     while (cur != NULL) {
-        memset(cur->pl.pre, 0, sizeof(cur->pl.pre));
-        memset(cur->pl.salt, 0, sizeof(cur->pl.salt));
+        OPENSSL_cleanse(cur->pl.pre, sizeof(cur->pl.pre));
+        OPENSSL_cleanse(cur->pl.salt, sizeof(cur->pl.salt));
         cur->pl.priv = 1;
         cur = cur->next;
     }
@@ -301,7 +307,7 @@ int zklaim_ctx_verify(zklaim_ctx *ctx, const unsigned char trusted_issuer_key[32
 
     if (zklaim_buf2sig(ctx->signature, sizeof(ctx->signature), &sig)) {
         fprintf(stderr, "[%s (%d)] error occurred: %s\n", __FILE__, __LINE__, "could not load sig");
-        return ZKLAIM_ERROR;
+        return ZKLAIM_INVALID_SIGNATURE;
     }
 
     if (zklaim_buf2pub(issuer_key, sizeof(issuer_key), &pub)) {

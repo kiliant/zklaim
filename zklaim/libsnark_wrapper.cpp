@@ -25,6 +25,7 @@
 #include <limits>
 #include <locale>
 #include <memory>
+#include <mutex>
 #include <stdio.h>
 
 #include <libsnark/gadgetlib1/gadgets/basic_gadgets.hpp>
@@ -46,6 +47,17 @@ extern "C" {
 
 using namespace std;
 using namespace libsnark;
+
+static void initialize_snark() {
+    static std::once_flag initialized;
+    std::call_once(initialized, [] {
+        // libff's profiling stack and counters are process-global, including
+        // DEBUG builds, and cannot be updated by concurrent proof checks.
+        libff::inhibit_profiling_counters = 1;
+        libff::inhibit_profiling_info = 1;
+        ppT::init_public_params();
+    });
+}
 
 // libff's decimal bigint reader assumes a digit-only token that fits its fixed
 // limb array. Check formatted reads before that reader sees them; binary reads
@@ -225,11 +237,7 @@ int libsnark_trusted_setup(size_t num_of_payloads, unsigned char **pk_out, size_
     if (num_of_payloads == 0 || num_of_payloads > UINT32_MAX) {
         return ZKLAIM_ERROR;
     }
-#ifndef DEBUG
-    libff::inhibit_profiling_counters = 1;
-    libff::inhibit_profiling_info = 1;
-#endif
-    ppT::init_public_params();
+    initialize_snark();
     auto keypair = generate_keypair<ppT>(num_of_payloads);
 
     unsigned char *vk = nullptr;
@@ -255,11 +263,7 @@ int libsnark_prove(zklaim_ctx *ctx, const unsigned char *pk_buf, size_t pk_size,
     if (ctx == nullptr || pk_buf == nullptr || nonce == nullptr || !payload_list_matches(ctx)) {
         return ZKLAIM_ERROR;
     }
-#ifndef DEBUG
-    libff::inhibit_profiling_counters = 1;
-    libff::inhibit_profiling_info = 1;
-#endif
-    ppT::init_public_params();
+    initialize_snark();
     r1cs_gg_ppzksnark_proving_key<ppT> pk;
 
     if (libsnark_import_pk(&pk, pk_buf, pk_size) != ZKLAIM_OK) {
@@ -288,11 +292,7 @@ int libsnark_verify(zklaim_ctx *ctx, const unsigned char *vk_buf, size_t vk_size
     if (ctx == nullptr || vk_buf == nullptr || nonce == nullptr || !payload_list_matches(ctx)) {
         return ZKLAIM_ERROR;
     }
-#ifndef DEBUG
-    libff::inhibit_profiling_counters = 1;
-    libff::inhibit_profiling_info = 1;
-#endif
-    ppT::init_public_params();
+    initialize_snark();
     int res;
     r1cs_gg_ppzksnark_verification_key<ppT> vk;
 

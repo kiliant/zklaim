@@ -104,8 +104,14 @@ int worker(int k) {
      * - 3 -
      * add payload to context
      */
-    for (int i=0; i<k; i++)
-        zklaim_add_pl(ctx, pl);
+    for (int i=0; i<k; i++) {
+        if (zklaim_add_pl(ctx, pl) != ZKLAIM_OK) {
+            zklaim_ctx_free(ctx);
+            gcry_sexp_release(priv);
+            gcry_sexp_release(pub);
+            return ZKLAIM_ERROR;
+        }
+    }
     //zklaim_add_pl(ctx, pl2);
     //zklaim_add_pl(ctx, pl2);
     zklaim_hash_ctx(ctx);

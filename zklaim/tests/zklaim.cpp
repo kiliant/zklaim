@@ -228,9 +228,21 @@ TEST(zklaim, can_create_and_add_pl) {
     pl.priv = 0;
 
     zklaim_ctx *ctx = zklaim_context_new();
-    zklaim_add_pl(ctx, pl);
+    ASSERT_EQ(ZKLAIM_OK, zklaim_add_pl(ctx, pl));
 
     ASSERT_FALSE(memcmp(&pl, &ctx->pl_ctx_head->pl, sizeof(zklaim_payload)));
+}
+
+TEST(zklaim, payload_insertion_rejects_invalid_context_without_mutation) {
+    zklaim_payload pl = {};
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_add_pl(nullptr, pl));
+    std::unique_ptr<zklaim_ctx, decltype(&zklaim_ctx_free)> ctx(
+        zklaim_context_new(), zklaim_ctx_free);
+    ASSERT_NE(nullptr, ctx);
+    ctx->num_of_payloads = UINT32_MAX;
+    EXPECT_EQ(ZKLAIM_ERROR, zklaim_add_pl(ctx.get(), pl));
+    EXPECT_EQ(nullptr, ctx->pl_ctx_head);
+    EXPECT_EQ(static_cast<size_t>(UINT32_MAX), ctx->num_of_payloads);
 }
 
 TEST(zklaim, can_do_ts) {
